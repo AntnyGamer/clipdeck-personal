@@ -106,8 +106,11 @@ async function inspect(url, tools, job) {
     const diagnostic = details.replace(/https?:\/\/\S+/g, '[URL]')
       .replace(/(\[youtube\]\s+)[\w-]{11}:/g, '$1[video]:').slice(-1600);
     console.warn('YouTube lookup failed:', diagnostic);
-    if (/HTTP Error (?:403|429)|sign in|bot\b|confirm your age|members.only|private video|login/i.test(details)) {
-      throw new MediaError('YouTube restricted access to this link. Try a public video available from your device.');
+    if (/HTTP Error (?:403|429)|sign in to confirm[^\n]+bot/i.test(details)) {
+      throw new MediaError('YouTube refused this request from the converter’s host. Try another public link or try again later.');
+    }
+    if (/sign in|confirm your age|members.only|private video|login/i.test(details)) {
+      throw new MediaError('YouTube requires sign-in or permission for this video. Try a public link.');
     }
     if (/premiere|scheduled|will begin|upcoming|not currently live/i.test(details)) {
       throw new MediaError('This stream has yet to start. Open the link again when it goes live.');
@@ -152,32 +155,35 @@ async function download(info, tools, job, dir) {
 
 function liveInput(formats, format, limit) {
   const streams = (formats ?? []).filter(item => {
-    if (!item.protocol?.startsWith('m3u8') || item.acodec === 'none') return false;
-    if (format === 'mp4' && item.vcodec === 'none') return false;
+    if (!item.protocol?.startsWith('m3u8')) return false;
     try {
       const url = new URL(item.url);
       return url.protocol === 'https:' && (url.hostname === 'googlevideo.com' || url.hostname.endsWith('.googlevideo.com') || url.hostname === 'www.youtube.com');
     } catch { return false; }
   });
+  const audioStreams = streams.filter(stream => stream.acodec !== 'none');
+  audioStreams.sort((a, b) => Number(b.vcodec === 'none') - Number(a.vcodec === 'none') || (a.tbr || Infinity) - (b.tbr || Infinity));
+  if (format === 'mp3') return audioStreams[0];
+
+  const videoStreams = streams.filter(stream => stream.vcodec !== 'none');
   const size = stream => Math.min(stream.width || Infinity, stream.height || Infinity);
-  if (format === 'mp3') {
-    streams.sort((a, b) => Number(b.vcodec === 'none') - Number(a.vcodec === 'none') || (a.tbr || Infinity) - (b.tbr || Infinity));
-  } else {
-    streams.sort((a, b) => {
-      const aFits = size(a) <= limit;
-      const bFits = size(b) <= limit;
-      return Number(bFits) - Number(aFits) || (aFits ? size(b) - size(a) : size(a) - size(b)) || (b.fps ?? 0) - (a.fps ?? 0);
-    });
-  }
-  return streams[0];
+  videoStreams.sort((a, b) => {
+    const aFits = size(a) <= limit;
+    const bFits = size(b) <= limit;
+    return Number(bFits) - Number(aFits) || (aFits ? size(b) - size(a) : size(a) - size(b)) || (b.fps ?? 0) - (a.fps ?? 0);
+  });
+  const video = videoStreams[0];
+  if (!video) return null;
+  return { ...video, audioUrl: video.acodec === 'none' ? audioStreams[0]?.url : undefined };
 }
 
 export async function captureStream(stream, tools, job, dir) {
   const target = join(dir, 'capture.mkv');
-  const args = ['-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats',
-    '-rw_timeout', '12000000', '-protocol_whitelist', 'http,https,tcp,tls,crypto',
-    '-live_start_index', '-1', '-i', stream.url];
-  args.push(...(job.format === 'mp3' ? ['-map', '0:a:0', '-vn'] : ['-map', '0:v:0', '-map', '0:a:0?']));
+  const input = url => ['-rw_timeout', '12000000', '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+    '-live_start_index', '-1', '-i', url];
+  const args = ['-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats', ...input(stream.url)];
+  if (stream.audioUrl) args.push(...input(stream.audioUrl));
+  args.push(...(job.format === 'mp3' ? ['-map', '0:a:0', '-vn'] : ['-map', '0:v:0', '-map', stream.audioUrl ? '1:a:0' : '0:a:0?']));
   args.push('-c', 'copy', target);
   job.state = 'connecting';
   let failure;
