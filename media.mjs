@@ -103,6 +103,9 @@ async function inspect(url, tools, job) {
   } catch (error) {
     if (error instanceof MediaError) throw error;
     const details = error.message;
+    const diagnostic = (details.split(/\r?\n/).findLast(line => line.startsWith('ERROR:')) ?? details)
+      .replace(/https?:\/\/\S+/g, '[URL]').replace(/(\[youtube\]\s+)[\w-]{11}:/g, '$1[video]:').slice(0, 450);
+    console.warn('YouTube lookup failed:', diagnostic);
     if (/HTTP Error 429|sign in|bot|confirm your age|members.only|private video|login/i.test(details)) {
       throw new MediaError('YouTube restricted access to this link. Try a public video available from your device.');
     }

@@ -20,6 +20,8 @@ const working = new Set(['checking', 'downloading', 'connecting', 'recording', '
 let job = null;
 let health = 'connecting';
 let commandRunning = false;
+let pollTimer;
+let refreshing = false;
 let revision = 0;
 
 function setText(element, value) {
@@ -35,7 +37,8 @@ function message(text) {
 function updateSubmit() {
   const busy = working.has(job?.state);
   convertButton.disabled = health !== 'ready' || busy || commandRunning;
-  setText(convertButton, busy ? 'Conversion in progress' : `Convert to ${form.elements.format.value.toUpperCase()}`);
+  const label = commandRunning && !busy ? 'Connecting…' : `Convert to ${form.elements.format.value.toUpperCase()}`;
+  setText(convertButton, busy ? 'Conversion in progress' : label);
 }
 
 function showQualities() {
@@ -122,11 +125,18 @@ function showHealth(next, text) {
   updateSubmit();
 }
 
+function scheduleRefresh(delay) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refresh, delay);
+}
+
 async function refresh() {
+  if (commandRunning || refreshing) return;
+  refreshing = true;
   const priorRevision = revision;
   try {
-    if (commandRunning) return;
-    const response = await fetch('/api/status', { signal: AbortSignal.timeout(5000) });
+    const timeout = working.has(job?.state) ? 8000 : 90000;
+    const response = await fetch('/api/status', { signal: AbortSignal.timeout(timeout) });
     if (!response.ok) throw new Error('Host unreachable');
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
@@ -140,7 +150,9 @@ async function refresh() {
   } catch {
     if (priorRevision === revision && !commandRunning) showHealth('offline', 'Host offline');
   } finally {
-    setTimeout(refresh, working.has(job?.state) ? 850 : 2400);
+    refreshing = false;
+    if (working.has(job?.state)) scheduleRefresh(1000);
+    else if (health === 'offline' && !document.hidden) scheduleRefresh(15000);
   }
 }
 
@@ -152,7 +164,7 @@ async function command(path, data = {}) {
   try {
     const response = await fetch(path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(path === '/api/jobs' ? 90000 : 12000),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
@@ -164,6 +176,7 @@ async function command(path, data = {}) {
   } finally {
     commandRunning = false;
     renderJob(job);
+    scheduleRefresh(250);
   }
 }
 
@@ -193,5 +206,8 @@ form.addEventListener('submit', async event => {
 });
 stopButton.addEventListener('click', () => command(`/api/jobs/${job.id}/stop`));
 cancelButton.addEventListener('click', () => command(`/api/jobs/${job.id}/cancel`));
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) scheduleRefresh(0);
+});
 showQualities();
 refresh();
