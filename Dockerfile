@@ -1,7 +1,7 @@
 FROM node:24-bookworm-slim
 
 ARG TARGETARCH
-ARG YTDLP_VERSION=2026.10.26
+ARG YTDLP_VERSION=2026.11.19.232656
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini \
     && rm -rf /var/lib/apt/lists/* \
@@ -10,7 +10,7 @@ RUN apt-get update \
         arm64) asset=yt-dlp_linux_aarch64 ;; \
         *) exit 1 ;; \
     esac \
-    && release="https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}" \
+    && release="https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/${YTDLP_VERSION}" \
     && curl -fsSL --retry 3 "${release}/SHA2-256SUMS" -o /tmp/yt-dlp-checksums \
     && curl -fsSL --retry 3 "${release}/${asset}" -o "/tmp/${asset}" \
     && cd /tmp \
