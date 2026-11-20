@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: clipdeck-personal
+    runtime: docker
+    plan: free
+    region: virginia
+    autoDeployTrigger: "off"
+    healthCheckPath: /healthz
+    envVars:
+      - key: CLIPDECK_PASSWORD
+        generateValue: true

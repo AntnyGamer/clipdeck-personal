@@ -1,0 +1,227 @@
+import { createReadStream } from 'node:fs';
+import { mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { spawn } from 'node:child_process';
+import { findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
+
+const root = import.meta.dirname;
+const hosted = process.env.CLIPDECK_HOSTED === '1';
+const port = Number(process.env.PORT ?? process.env.CLIPDECK_PORT ?? 4174);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('CLIPDECK_PORT must be between 1024 and 65535.');
+
+const local = `http://127.0.0.1:${port}`;
+const localName = `http://localhost:${port}`;
+const localHosts = new Set([new URL(local).host, new URL(localName).host]);
+const external = process.env.CLIPDECK_ORIGIN || process.env.RENDER_EXTERNAL_URL;
+if (hosted && (!external || new URL(external).origin !== external)) {
+  throw new Error('Set CLIPDECK_ORIGIN to the site address without a trailing slash. Render sets its own address automatically.');
+}
+const publicHost = hosted && new URL(external).host;
+const password = process.env.CLIPDECK_PASSWORD;
+if (hosted && (password?.length ?? 0) < 16) throw new Error('Set CLIPDECK_PASSWORD to a strong password of at least 16 characters.');
+const hash = value => createHash('sha256').update(value).digest();
+const expectedAuth = hosted && hash(`Basic ${Buffer.from(`clipdeck:${password}`).toString('base64')}`);
+const stash = await mkdtemp(join(tmpdir(), 'clipdeck-'));
+const tools = await findTools(root);
+const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
+const retention = 12 * 60 * 60 * 1000;
+const jobs = new Map();
+const activeStates = new Set(['checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
+let latest = null;
+let active = null;
+let shuttingDown = false;
+
+const assets = new Map([
+  ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/style.css', ['style.css', 'text/css; charset=utf-8']],
+  ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+]);
+
+function json(response, status, data) {
+  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  response.end(JSON.stringify(data));
+}
+
+function publicJob(job) {
+  if (!job) return null;
+  const { id, state, format, quality, progress, title, size, live, recorded, error, notice } = job;
+  return { id, state, format, quality, progress, title, size, live, recorded, error, notice };
+}
+
+function allowedOrigin(request, path) {
+  const { host, origin } = request.headers;
+  if (path.startsWith('/api/') && request.headers['sec-fetch-site'] === 'cross-site') return false;
+  if (hosted ? host !== publicHost : !localHosts.has(host)) return false;
+  if (request.method === 'POST' && !origin) return false;
+  return !origin || (hosted ? origin === external : origin === local || origin === localName);
+}
+
+async function readRequest(request) {
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] ?? '')) return null;
+  let body = '';
+  request.setEncoding('utf8');
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 4096) return null;
+  }
+  try { return JSON.parse(body); } catch { return null; }
+}
+
+async function perform(job) {
+  try {
+    await mkdir(job.dir);
+    const output = await processMedia(tools, job, job.dir);
+    if (job.cancelled) throw new Error('This conversion was cancelled.');
+    Object.assign(job, output, { progress: 100, state: 'ready' });
+  } catch (error) {
+    job.state = job.cancelled ? 'cancelled' : 'failed';
+    if (!job.cancelled) {
+      job.error = error.constructor.name === 'MediaError' ? error.message : 'Could not create the conversion. Check the host’s available storage.';
+    }
+  } finally {
+    job.finished = Date.now();
+    active = null;
+    const entries = await readdir(job.dir).catch(() => []);
+    await Promise.allSettled(entries.filter(name => join(job.dir, name) !== job.file)
+      .map(name => rm(join(job.dir, name), { force: true })));
+  }
+}
+
+function cancel(job) {
+  job.cancelled = true;
+  job.state = 'cancelling';
+  job.child?.kill();
+}
+
+function fileHeader(job) {
+  let title = (job.title || 'YouTube clip').replace(/[<>:"/\\|?*\p{Cc}\p{Cf}]/gu, '_').trim().replace(/[. ]+$/, '');
+  if (!title) title = 'YouTube clip';
+  const suffix = `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
+  const filename = `${title} - ${suffix}.${job.format}`.toWellFormed();
+  const fallback = filename.replace(/[^\x20-\x7E]/g, '_');
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+async function sendFile(response, job) {
+  if (!job || job.state !== 'ready') return json(response, 404, { error: 'This file has expired or is still being prepared.' });
+  job.readers += 1;
+  try {
+    response.writeHead(200, {
+      'Content-Type': job.format === 'mp3' ? 'audio/mpeg' : 'video/mp4',
+      'Content-Length': job.size,
+      'Content-Disposition': fileHeader(job),
+    });
+    await pipeline(createReadStream(job.file), response);
+  } catch {
+    response.destroy();
+  } finally {
+    job.readers -= 1;
+  }
+}
+
+async function handle(request, response) {
+  response.setHeader('Cache-Control', 'no-store');
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  response.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
+  const path = (request.url ?? '').split('?')[0];
+  const method = request.method;
+  if (method === 'GET' && path === '/healthz') return json(response, missing.length ? 503 : 200, { ready: !missing.length });
+  if (!allowedOrigin(request, path)) return json(response, 403, { error: 'Open Clipdeck from its configured address.' });
+  if (hosted && !timingSafeEqual(hash(request.headers.authorization ?? ''), expectedAuth)) {
+    response.setHeader('WWW-Authenticate', 'Basic realm="Clipdeck", charset="UTF-8"');
+    return json(response, 401, { error: 'Sign in as clipdeck with your hosting password.' });
+  }
+  const asset = assets.get(path);
+  if ((method === 'GET' || method === 'HEAD') && asset) {
+    const [name, contentType] = asset;
+    const content = await readFile(join(root, 'public', name));
+    response.writeHead(200, { 'Content-Type': contentType, 'Content-Length': content.length });
+    return response.end(method === 'HEAD' ? undefined : content);
+  }
+  if (method === 'GET' && path === '/api/status') {
+    return json(response, 200, { hosted, missing, job: publicJob(active ?? latest) });
+  }
+  if (method === 'POST' && path === '/api/jobs') {
+    const data = await readRequest(request);
+    const url = typeof data?.url === 'string' && sourceUrl(data.url.trim());
+    const format = data?.format;
+    const quality = data?.quality;
+    if (!url) return json(response, 400, { error: 'Paste a full YouTube link to a video, Short, or livestream.' });
+    if ((format !== 'mp3' && format !== 'mp4') || !qualities[format].includes(quality)) {
+      return json(response, 400, { error: 'Choose a supported format and quality.' });
+    }
+    if (missing.length) return json(response, 503, { error: `Missing ${missing.join(', ')}. Run the Windows launcher or follow the setup guide.` });
+    if (active || shuttingDown) return json(response, 409, { error: 'A conversion is already in progress.' });
+    const id = randomUUID();
+    const job = { id, dir: join(stash, id), url, format, quality, state: 'checking', readers: 0 };
+    jobs.set(id, job);
+    active = latest = job;
+    job.completion = perform(job);
+    return json(response, 202, { job: publicJob(job) });
+  }
+  const match = /^\/api\/jobs\/([\da-f-]{36})\/(file|stop|cancel)$/.exec(path);
+  const job = match && jobs.get(match[1]);
+  if (method === 'GET' && match?.[2] === 'file') return sendFile(response, job);
+  if (method === 'POST' && job && job === active && activeStates.has(job.state)) {
+    if (match[2] === 'stop' && stopCapture(job)) return json(response, 200, { job: publicJob(job) });
+    if (match[2] === 'cancel' && job.state !== 'cancelling') {
+      cancel(job);
+      return json(response, 200, { job: publicJob(job) });
+    }
+    return json(response, 409, { error: 'This action is no longer available.' });
+  }
+  return json(response, 404, { error: 'Page not found.' });
+}
+
+const server = createServer({ requestTimeout: 15000, headersTimeout: 10000 }, (request, response) => {
+  handle(request, response).catch(error => {
+    console.error(error.code ?? error.message);
+    if (response.headersSent) response.destroy();
+    else json(response, 500, { error: 'The converter encountered a host error.' });
+  });
+});
+
+const garbageCollection = setInterval(() => {
+  for (const job of jobs.values()) {
+    if (!job.finished || job.readers || Date.now() - job.finished < retention) continue;
+    jobs.delete(job.id);
+    if (latest === job) latest = null;
+    rm(job.dir, { recursive: true, force: true }).catch(() => {});
+  }
+}, 60000).unref();
+
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  clearInterval(garbageCollection);
+  const pending = active;
+  if (pending) cancel(pending);
+  const closed = new Promise(resolve => server.close(resolve));
+  await pending?.completion;
+  server.closeAllConnections();
+  await closed;
+  await rm(stash, { recursive: true, force: true }).catch(() => {});
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+server.once('error', async error => {
+  console.error(error.code === 'EADDRINUSE' ? `Port ${port} is already in use. Set CLIPDECK_PORT to use another port.` : error.message);
+  await rm(stash, { recursive: true, force: true }).catch(() => {});
+  process.exit(1);
+});
+server.listen(port, hosted ? '0.0.0.0' : '127.0.0.1', () => {
+  console.log(`Clipdeck is running at ${hosted ? external : local}`);
+  if (missing.length) console.log(`Setup needed: ${missing.join(', ')}`);
+  if (!hosted && process.platform === 'win32' && process.argv.includes('--open')) {
+    spawn('rundll32.exe', ['url.dll,FileProtocolHandler', local], { detached: true, stdio: 'ignore', windowsHide: true })
+      .on('error', () => {}).unref();
+  }
+});

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="A private YouTube to MP4 and MP3 converter for videos, Shorts, and live streams.">
+  <title>Clipdeck · YouTube Converter</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top-bar">
+    <div class="top-inner">
+      <div class="wordmark"><span class="brand-icon" aria-hidden="true"></span>Clipdeck</div>
+      <span id="host-status" class="host"><span class="status-dot" aria-hidden="true"></span><span id="host-label">Connecting</span></span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="intro">
+      <h1>YouTube converter<span>.</span></h1>
+      <p>Save a video, Short, or live stream as MP4 or MP3.</p>
+    </div>
+
+    <div class="workspace">
+      <section class="panel control-panel" aria-label="Conversion settings">
+        <form id="convert-form">
+          <label class="field-title" for="url">YouTube link</label>
+          <div class="link-field">
+            <input id="url" name="url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" required maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="source-hint">
+            <button id="paste" class="paste" type="button">Paste</button>
+          </div>
+          <p class="hint" id="source-hint">Supports videos, Shorts, live streams, and published replays.</p>
+
+          <fieldset class="form-section">
+            <legend>Format</legend>
+            <div class="format-grid">
+              <label class="format-option">
+                <input type="radio" name="format" value="mp4" checked>
+                <span class="format-icon video-icon" aria-hidden="true"></span>
+                <span><strong>MP4</strong><span class="format-description">Video + audio</span></span>
+                <span class="selection-ring" aria-hidden="true"></span>
+              </label>
+              <label class="format-option">
+                <input type="radio" name="format" value="mp3">
+                <span class="format-icon audio-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span><strong>MP3</strong><span class="format-description">Audio only</span></span>
+                <span class="selection-ring" aria-hidden="true"></span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend id="quality-label">Maximum resolution</legend>
+            <div class="quality-grid" id="qualities"></div>
+            <p class="hint" id="quality-hint">Uses the highest available resolution up to your selection.</p>
+          </fieldset>
+
+          <div class="submit-row">
+            <button id="convert" class="primary" type="submit" disabled>Convert to MP4</button>
+          </div>
+          <p id="form-message" class="message" role="status" hidden></p>
+        </form>
+      </section>
+
+      <section class="panel result-panel" aria-label="Conversion result">
+        <div class="panel-top">
+          <h2>Output</h2>
+          <span id="state" class="state" role="status">Idle</span>
+        </div>
+
+        <div class="result-content" id="result" data-state="idle">
+          <div class="result-icon" aria-hidden="true"><span></span></div>
+          <h3 id="result-title">No conversion yet</h3>
+          <p id="result-text">Your file will appear here when it’s ready.</p>
+          <progress id="progress" max="100" aria-label="Conversion progress" hidden></progress>
+          <div class="actions" id="actions" hidden>
+            <a id="download" class="primary" download hidden>Download file</a>
+            <button id="stop" class="primary" type="button" hidden>Stop &amp; save</button>
+            <button id="cancel" class="secondary" type="button" hidden>Cancel</button>
+          </div>
+        </div>
+
+        <details class="live-help">
+          <summary>How live recording works<span aria-hidden="true"></span></summary>
+          <p>Paste a live link to record from the current point. Select <strong>Stop &amp; save</strong> when you’re ready to export. Available replays convert like regular videos.</p>
+        </details>
+      </section>
+    </div>
+
+    <footer>Use Clipdeck for media you’re allowed to download.</footer>
+  </main>
+</body>
+</html>
