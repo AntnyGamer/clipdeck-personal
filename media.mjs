@@ -179,13 +179,16 @@ function liveInput(formats, format, limit) {
 
 export async function captureStream(stream, tools, job, dir) {
   const target = join(dir, 'capture.mkv');
+  job.state = 'connecting';
+  const hlsHelp = await run(tools.ffmpeg, ['-hide_banner', '-h', 'demuxer=hls'], job, { capture: true, timeout: 15000 });
+  // YouTube's signed HLS segment URLs can omit the audio file extension.
+  const segmentOptions = hlsHelp.includes('-extension_picky') ? ['-extension_picky', '0'] : [];
   const input = url => ['-rw_timeout', '12000000', '-protocol_whitelist', 'http,https,tcp,tls,crypto',
-    '-live_start_index', '-1', '-i', url];
+    ...segmentOptions, '-live_start_index', '-1', '-i', url];
   const args = ['-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats', ...input(stream.url)];
   if (stream.audioUrl) args.push(...input(stream.audioUrl));
   args.push(...(job.format === 'mp3' ? ['-map', '0:a:0', '-vn'] : ['-map', '0:v:0', '-map', stream.audioUrl ? '1:a:0' : '0:a:0?']));
   args.push('-c', 'copy', target);
-  job.state = 'connecting';
   let failure;
   try {
     await run(tools.ffmpeg, args, job, {
