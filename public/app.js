@@ -181,8 +181,12 @@ async function refresh() {
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
     compressionReady = !(status.compressionMissing ?? status.missing).length;
-    conversionCatalog = status.conversionCatalog ?? null;
-    showAvailableFormats();
+    if (!conversionCatalog && status.conversionCatalog) {
+      conversionCatalog = status.conversionCatalog;
+      converterFile.accept = Object.values(conversionCatalog)
+        .flatMap(group => group.inputs.map(extension => `.${extension}`)).join(',');
+      showAvailableFormats();
+    }
     if (status.missing.length) {
       showHealth('setup', compressionReady ? 'YouTube setup needed' : 'Setup needed');
       message(compressionReady
@@ -275,7 +279,7 @@ function showAvailableFormats() {
   targetSelect.disabled = !formats.length;
   if (formats.includes(previous)) targetSelect.value = previous;
   setText(conversionHint, formats.length
-    ? 'Only compatible formats are shown. Changing formats may affect quality or remove video/audio tracks.'
+    ? `Selected ${extension.toUpperCase()} · ${sizeLabel(file.size)}. Changing formats may affect quality or remove video/audio tracks.`
     : 'No matching formats. Clear your search or try another file.');
   updateSubmit();
 }
