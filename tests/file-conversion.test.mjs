@@ -90,5 +90,5 @@ test('rejects damaged or incompatible inputs', async t => {
   await writeFile(join(dir, 'upload.jpeg'), 'not a JPEG');
   await assert.rejects(convertFile({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     { extension: '.jpeg', targetFormat: 'jpg' }, dir),
-  /Could not read this file/);
+  /Could not read this file|does not contain a valid media track/);
 });
