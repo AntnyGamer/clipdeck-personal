@@ -199,7 +199,7 @@ async function handle(request, response) {
     try { filename = decodeURIComponent(request.headers['x-clipdeck-filename'] ?? ''); } catch { /* Invalid encoding. */ }
     if (!filename || filename.length > 240 || filename.includes('/') || filename.includes('\\')
         || [...filename].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
-      return json(response, 400, { error: 'Choose a video with a valid filename.' });
+      return json(response, 400, { error: 'Choose a file with a valid filename.' });
     }
     const extension = extname(filename).toLowerCase();
     if (convertingFile) {
@@ -212,7 +212,7 @@ async function handle(request, response) {
     const lengthHeader = request.headers['content-length'];
     const length = Number(lengthHeader);
     if (lengthHeader !== undefined && (!Number.isSafeInteger(length) || length <= 0)) {
-      return json(response, 400, { error: 'Choose a nonempty video file.' });
+      return json(response, 400, { error: 'Choose a nonempty file.' });
     }
     if (length > maxUploadBytes) {
       return json(response, 413, { error: 'Files must be 200 MB or smaller.' });

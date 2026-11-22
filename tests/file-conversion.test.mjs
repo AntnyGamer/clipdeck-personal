@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canConvert, conversionCatalog, convertFile } from '../converter.mjs';
@@ -58,6 +58,23 @@ test('converts video, audio, and image files without changing the input', async 
   await check('image-to-jpg', 'png', 'jpg', 'mjpeg');
   await check('image-to-webp', 'png', 'webp', 'webp');
   await check('video-to-gif', 'mp4', 'gif', 'gif');
+
+  for (const [extension, target] of [['jpeg', 'jpg'], ['tif', 'tiff']]) {
+    const imageFile = join(root, `photo.${extension}`);
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', image,
+      '-frames:v', '1', '-update', '1', imageFile]);
+    const dir = join(root, `alias-${extension}`);
+    await mkdir(dir);
+    const input = join(dir, `upload.${extension}`);
+    await copyFile(imageFile, input);
+    const originalBytes = await readFile(input);
+    const job = { extension: `.${extension}`, targetFormat: target };
+    const result = await convertFile(tools, job, dir);
+    assert.equal(result.format, target);
+    assert.equal(result.originalPreserved, true, 'An extension alias must not re-encode its image');
+    assert.equal(result.file, input);
+    assert.deepEqual(await readFile(result.file), originalBytes);
+  }
 });
 
 test('rejects damaged or incompatible inputs', async t => {
@@ -70,4 +87,8 @@ test('rejects damaged or incompatible inputs', async t => {
   await assert.rejects(convertFile({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
     { extension: '.mp4', targetFormat: 'png' }, dir),
   /cannot be converted/);
+  await writeFile(join(dir, 'upload.jpeg'), 'not a JPEG');
+  await assert.rejects(convertFile({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' },
+    { extension: '.jpeg', targetFormat: 'jpg' }, dir),
+  /Could not read this file|does not contain a valid media track/);
 });
