@@ -40,6 +40,7 @@ test('compresses uploaded videos with lossless and target-size choices', async t
   for (const quality of ['lossless', 'best']) {
     const result = await runCase(`already-small-${quality}`, quality, 'mb', 100);
     assert.equal(result.lossless, true);
+    assert.equal(result.originalPreserved, true);
     assert.equal(result.size, originalSize);
     assert.equal(result.job.format, 'mp4');
     assert.equal(result.file, join(root, `already-small-${quality}`, 'upload.mp4'));
