@@ -27,9 +27,11 @@ For another Docker host, set `PORT`, `CLIPDECK_ORIGIN` to the site’s HTTPS ori
 
 Open **Compress a video**, select a local video up to **200 MB**, and choose a size goal: automatic, a 1–95% reduction, or a target of 0.1–200 MB (decimal MB). Choose a quality preference:
 
-- **Strictly lossless** preserves audio and video without re-encoding and saves an MKV. It can fail a smaller-size goal rather than silently lowering quality.
-- **Prefer lossless** (default) tries to preserve the tracks without re-encoding first. If that cannot meet the goal, it re-encodes to MP4 while aiming for the requested size.
+- **Strictly lossless** preserves audio and video without re-encoding. It keeps the original file if it already meets your target or remuxing cannot make it smaller; otherwise it saves an MKV. It can fail an unattainable smaller-size goal rather than silently lowering quality.
+- **Prefer lossless** (default) preserves the original file when it already meets the size goal, tries lossless remuxing first for smaller goals, and re-encodes to MP4 only if the goal requires it. With automatic compression, it never increases the size or re-encodes an already compressed file just to make it smaller.
 - **Balanced** creates H.264/AAC MP4, limiting resolution to 1080p.
 - **Prioritize file size** creates H.264/AAC MP4, limiting resolution to 720p.
 
 When a size goal is selected, Clipdeck uses two-pass FFmpeg video encoding where needed. Exact size is not guaranteed; it shows the actual final size, savings percentage, and whether the file was re-encoded. The original file on your device remains untouched. Videos are uploaded to the Clipdeck server for processing, and temporary server files expire after 12 hours. Very large or lengthy conversions may exceed free hosting limits.
+
+Compression requires only `ffmpeg` and `ffprobe`; YouTube conversion also requires `yt-dlp`. If only the YouTube downloader is missing, local-file compression remains available.
