@@ -113,10 +113,14 @@ details[open] summary span { transform: rotate(225deg); }
 
 footer { color: var(--muted); font-size: .86rem; margin: 1.65rem 0 2.5rem; }
 
-.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; padding: .3rem; margin-bottom: 1.55rem; border-radius: .7rem; background: #eff2f8; }
+.mode-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .4rem; padding: .3rem; margin-bottom: 1.55rem; border-radius: .7rem; background: #eff2f8; }
 .mode-tab { border: 0; border-radius: .5rem; padding: .72rem .35rem; color: var(--muted); background: transparent; font-size: .9rem; font-weight: 660; }
 .mode-tab[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: 0 1px 5px #23335116; }
 .mode-tab:hover:not([aria-selected="true"]) { background: #e4e9f3; }
+.search-field, .format-select { width: 100%; border: 1px solid #bfcadd; border-radius: .6rem; background: #fcfdff; color: var(--ink); padding: .72rem .75rem; margin-top: .65rem; }
+.search-field:focus, .format-select:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+.output-label { display: block; margin-top: 1.1rem; }
+.format-select:disabled { background: #f2f4f8; color: #697689; }
 .file-field { display: block; width: 100%; margin-top: .7rem; padding: .7rem; border: 1px solid #bfcadd; border-radius: .66rem; background: #fcfdff; color: var(--ink); font-size: .9rem; }
 .file-field::file-selector-button { margin-right: .75rem; padding: .5rem .7rem; border: 0; border-radius: .4rem; background: #ebeff7; color: #263753; font: inherit; font-weight: 650; cursor: pointer; }
 .goal-modes { display: flex; flex-wrap: wrap; gap: .65rem 1.1rem; }
@@ -139,6 +143,8 @@ footer { color: var(--muted); font-size: .86rem; margin: 1.65rem 0 2.5rem; }
   .result-content { min-height: 13rem; }
 }
 @media (max-width: 420px) {
+  .mode-tab { font-size: .77rem; padding: .7rem .16rem; }
+
   .shell, .top-inner { padding-inline: .95rem; }
   .format-option { padding: .7rem .55rem; gap: .45rem; }
   .format-icon { width: 1.7rem; height: 1.7rem; }
