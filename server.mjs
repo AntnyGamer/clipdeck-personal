@@ -40,7 +40,7 @@ const outputTypes = {
   webp: 'image/webp', bmp: 'image/bmp', tiff: 'image/tiff',
 };
 const retention = 12 * 60 * 60 * 1000;
-const maxUploadBytes = 200_000_000;
+const maxUploadBytes = hosted ? 200_000_000 : Infinity;
 const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.mpeg', '.mpg']);
 const jobs = new Map();
 const activeStates = new Set(['uploading', 'checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
@@ -173,7 +173,7 @@ async function handle(request, response) {
   }
   if (method === 'GET' && path === '/api/status') {
     return json(response, 200, { hosted, missing, compressionMissing,
-      conversionCatalog, job: publicJob(active ?? latest) });
+      maxUploadBytes: hosted ? maxUploadBytes : null, conversionCatalog, job: publicJob(active ?? latest) });
   }
   if (method === 'POST' && (path === '/api/uploads' || path === '/api/conversions')) {
     const convertingFile = path === '/api/conversions';
@@ -191,8 +191,10 @@ async function handle(request, response) {
       }
       if (!['auto', 'percent', 'mb'].includes(goalKind)
           || (goalKind === 'percent' && !(goalValue >= 1 && goalValue <= 95))
-          || (goalKind === 'mb' && !(goalValue >= .1 && goalValue <= 200))) {
-        return json(response, 400, { error: 'Choose Auto, a reduction of 1–95%, or a target from 0.1–200 MB.' });
+          || (goalKind === 'mb' && (!Number.isFinite(goalValue) || goalValue < .1 || (hosted && goalValue > 200)))) {
+        return json(response, 400, { error: hosted
+          ? 'Choose Auto, a reduction of 1–95%, or a target from 0.1–200 MB.'
+          : 'Choose Auto, a reduction of 1–95%, or a target of at least 0.1 MB.' });
       }
     }
     let filename;
@@ -289,7 +291,7 @@ async function handle(request, response) {
   return json(response, 404, { error: 'Page not found.' });
 }
 
-const server = createServer({ requestTimeout: 10 * 60 * 1000, headersTimeout: 10000 }, (request, response) => {
+const server = createServer({ requestTimeout: hosted ? 10 * 60 * 1000 : 0, headersTimeout: 10000 }, (request, response) => {
   handle(request, response).catch(error => {
     console.error(error.code ?? error.message);
     if (response.headersSent) response.destroy();

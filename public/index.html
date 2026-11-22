@@ -70,7 +70,7 @@
         <form id="compress-form" role="tabpanel" aria-labelledby="upload-tab" hidden>
           <label class="field-title" for="video-file">Video file</label>
           <input class="file-field" id="video-file" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.wmv,.mpeg,.mpg" required>
-          <p class="hint">MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. Maximum file size: 200 MB. The original stays on your device.</p>
+          <p class="hint" id="compress-upload-hint">MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. File size limit depends on hosting. The original stays on your device.</p>
 
           <fieldset class="form-section">
             <legend>Size goal</legend>
@@ -114,7 +114,7 @@
         <form id="file-convert-form" role="tabpanel" aria-labelledby="file-tab" hidden>
           <label class="field-title" for="convert-file">Choose a file</label>
           <input class="file-field" id="convert-file" type="file" required>
-          <p class="hint">Convert supported video, audio and image files, up to 200 MB. Your original is never changed.</p>
+          <p class="hint" id="convert-upload-hint">Convert supported video, audio and image files. File size limit depends on hosting. Your original is never changed.</p>
 
           <div class="form-section">
             <label class="field-title" for="target-search">Search output formats</label>

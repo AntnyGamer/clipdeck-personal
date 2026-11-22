@@ -13,7 +13,7 @@ const targetSearch = byId('target-search');
 const targetSelect = byId('target-format');
 const converterButton = byId('convert-file-button');
 const conversionHint = byId('convert-hint');
-const maxUploadBytes = 200_000_000;
+let maxUploadBytes = 200_000_000;
 const convertButton = byId('convert');
 const choices = byId('qualities');
 const progress = byId('progress');
@@ -183,6 +183,18 @@ async function refresh() {
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
     compressionReady = !(status.compressionMissing ?? status.missing).length;
+    const limit = status.hosted ? 200_000_000 : Infinity;
+    if (maxUploadBytes !== limit) {
+      maxUploadBytes = limit;
+      showGoal();
+    }
+    const limitHint = status.hosted
+      ? 'Maximum file size: 200 MB.'
+      : 'No fixed file-size limit in local mode; available disk space still matters.';
+    setText(byId('compress-upload-hint'),
+      `MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. ${limitHint} The original stays on your device.`);
+    setText(byId('convert-upload-hint'),
+      `Convert supported video, audio and image files. ${limitHint} Your original is never changed.`);
     if (!conversionCatalog && status.conversionCatalog) {
       conversionCatalog = status.conversionCatalog;
       converterFile.accept = Object.values(conversionCatalog)
@@ -298,7 +310,9 @@ function showGoal() {
   if (visible) {
     const percent = kind === 'percent';
     goalField.min = percent ? '1' : '0.1';
-    goalField.max = percent ? '95' : '200';
+    if (percent) goalField.max = '95';
+    else if (Number.isFinite(maxUploadBytes)) goalField.max = '200';
+    else goalField.removeAttribute('max');
     goalField.step = percent ? '1' : '0.1';
     goalField.value = String(savedGoals[kind]);
     setText(byId('goal-value-label'), percent ? 'Reduce original size by (%)' : 'Target size (MB)');
@@ -315,7 +329,9 @@ function startCompression(event) {
   }
   const goal = compressForm.elements.goal.value;
   const value = goal === 'auto' ? 0 : Number(goalField.value);
-  if (goal !== 'auto' && (goal === 'percent' ? !(value >= 1 && value <= 95) : !(value >= .1 && value <= 200))) {
+  if (goal !== 'auto' && (!Number.isFinite(value)
+    || (goal === 'percent' ? !(value >= 1 && value <= 95)
+      : !(value >= .1 && value <= maxUploadBytes / 1000000)))) {
     message('Choose a valid reduction percentage or target size.');
     return;
   }
@@ -386,7 +402,7 @@ form.addEventListener('change', event => {
 });
 source.addEventListener('input', () => message(''));
 fileField.addEventListener('change', () => {
-  message(fileField.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller.' : '');
+  message(fileField.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
   updateSubmit();
 });
 goalField.addEventListener('change', () => {
@@ -400,7 +416,7 @@ byId('youtube-tab').addEventListener('click', () => showMode('youtube'));
 byId('upload-tab').addEventListener('click', () => showMode('upload'));
 byId('file-tab').addEventListener('click', () => showMode('convert'));
 converterFile.addEventListener('change', () => {
-  message(converterFile.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller.' : '');
+  message(converterFile.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
   showAvailableFormats();
 });
 targetSearch.addEventListener('input', showAvailableFormats);
