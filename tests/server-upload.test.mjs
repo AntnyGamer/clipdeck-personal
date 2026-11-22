@@ -2,19 +2,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-test('upload API accepts a video, compresses it and serves the output', async t => {
+for (const hasDownloader of [true, false]) test(
+  `video upload works ${hasDownloader ? 'with' : 'without'} a YouTube downloader`,
+  { skip: !hasDownloader && process.platform === 'win32' }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'clipdeck-http-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = join(root, 'bin');
   await mkdir(bin);
-  const stub = join(bin, 'yt-dlp');
-  await writeFile(stub, '#!/bin/sh\nexit 1\n');
-  await chmod(stub, 0o755);
+  if (hasDownloader) {
+    const stub = join(bin, 'yt-dlp');
+    await writeFile(stub, '#!/bin/sh\nexit 1\n');
+    await chmod(stub, 0o755);
+  } else {
+    for (const tool of ['ffmpeg', 'ffprobe']) {
+      const executable = execFileSync('which', [tool], { encoding: 'utf8' }).trim();
+      await symlink(executable, join(bin, tool));
+    }
+  }
   const listener = createServer();
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
@@ -22,21 +31,23 @@ test('upload API accepts a video, compresses it and serves the output', async t 
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: new URL('..', import.meta.url).pathname,
-    env: { ...process.env, CLIPDECK_PORT: String(port), PATH: `${bin}:${process.env.PATH}` },
+    env: { ...process.env, CLIPDECK_PORT: String(port), PATH: hasDownloader ? `${bin}:${process.env.PATH}` : bin },
     stdio: 'ignore',
   });
   t.after(() => { if (child.exitCode === null) child.kill('SIGTERM'); });
 
-  let healthy = false;
+  let status;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (child.exitCode !== null) throw new Error('Clipdeck server exited before responding.');
     try {
-      const response = await fetch(`${base}/healthz`);
-      if (response.ok) { healthy = true; break; }
+      const response = await fetch(`${base}/api/status`);
+      if (response.ok) { status = await response.json(); break; }
     } catch { /* The server is starting. */ }
     await delay(100);
   }
-  assert.ok(healthy, 'Server did not become healthy');
+  assert.ok(status, 'Server did not respond.');
+  assert.deepEqual(status.compressionMissing, []);
+  assert.deepEqual(status.missing, hasDownloader ? [] : ['yt-dlp']);
 
   const input = join(root, 'sample.mp4');
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error',
