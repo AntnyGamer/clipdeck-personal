@@ -119,6 +119,12 @@ footer { color: var(--muted); font-size: .86rem; margin: 1.65rem 0 2.5rem; }
 .mode-tab:hover:not([aria-selected="true"]) { background: #e4e9f3; }
 .file-field { display: block; width: 100%; margin-top: .7rem; padding: .7rem; border: 1px solid #bfcadd; border-radius: .66rem; background: #fcfdff; color: var(--ink); font-size: .9rem; }
 .file-field::file-selector-button { margin-right: .75rem; padding: .5rem .7rem; border: 0; border-radius: .4rem; background: #ebeff7; color: #263753; font: inherit; font-weight: 650; cursor: pointer; }
+.goal-modes { display: flex; flex-wrap: wrap; gap: .65rem 1.1rem; }
+.goal-modes label { display: inline-flex; align-items: center; gap: .3rem; font-size: .88rem; color: #36445d; cursor: pointer; }
+.goal-modes input { accent-color: var(--blue); }
+.goal-input { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.goal-input label { font-weight: 620; font-size: .9rem; }
+.goal-input input { max-width: 7rem; padding: .5rem .65rem; border: 1px solid #bfcadd; border-radius: .5rem; }
 .preset-list { display: grid; gap: .55rem; }
 .preset-option { display: flex; align-items: center; gap: .75rem; border: 1px solid #d8e0ed; border-radius: .7rem; padding: .8rem; cursor: pointer; }
 .preset-option:hover { border-color: #97a3d9; }
