@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { run } from './media.mjs';
+import { fileProbeTimeout, run } from './media.mjs';
 
 export const conversionCatalog = {
   video: {
@@ -73,7 +73,7 @@ export async function convertFile(tools, job, dir) {
     try {
       const raw = await run(tools.ffprobe,
         ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: 20000 });
+        job, { capture: true, timeout: fileProbeTimeout });
       metadata = JSON.parse(raw);
     } catch (error) {
       if (job.cancelled) throw error;
