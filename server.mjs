@@ -151,7 +151,8 @@ async function handle(request, response) {
   response.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
   const path = (request.url ?? '').split('?')[0];
   const method = request.method;
-  if (method === 'GET' && path === '/healthz') return json(response, missing.length ? 503 : 200, { ready: !missing.length });
+  if (method === 'GET' && path === '/healthz') return json(response, compressionMissing.length ? 503 : 200,
+    { ready: !compressionMissing.length, youtubeReady: !missing.length });
   if (!allowedOrigin(request, path)) return json(response, 403, { error: 'Open Clipdeck from its configured address.' });
   if (hosted && !timingSafeEqual(hash(request.headers.authorization ?? ''), expectedAuth)) {
     response.setHeader('WWW-Authenticate', 'Basic realm="Clipdeck", charset="UTF-8"');
