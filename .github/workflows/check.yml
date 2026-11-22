@@ -1,0 +1,26 @@
+name: Verify Clipdeck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.mjs
+          node --check media.mjs
+          node --check public/app.js
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Test video compression
+        run: |
+          ffmpeg -version
+          node --test tests/*.test.mjs
