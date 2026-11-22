@@ -300,7 +300,7 @@ export async function compressVideo(tools, job, dir) {
       : job.goalKind === 'mb' ? Math.floor(job.goalValue * 1000000) : null;
     const desired = target == null ? null : Math.max(0, target);
     const isLossless = job.quality === 'lossless';
-    const wantCopy = isLossless || job.quality === 'best' || (desired != null && desired >= job.originalSize);
+    const wantCopy = isLossless || job.quality === 'best';
     if (wantCopy) {
       const copyFile = join(dir, 'copy.mkv');
       try {
