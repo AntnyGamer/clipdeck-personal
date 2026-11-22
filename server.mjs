@@ -29,6 +29,12 @@ const expectedAuth = hosted && hash(`Basic ${Buffer.from(`clipdeck:${password}`)
 const stash = await mkdtemp(join(tmpdir(), 'clipdeck-'));
 const tools = await findTools(root);
 const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
+const compressionMissing = missing.filter(tool => tool !== 'yt-dlp');
+const outputTypes = {
+  mp3: 'audio/mpeg', mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
+  mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
+  wmv: 'video/x-ms-wmv', mpeg: 'video/mpeg', mpg: 'video/mpeg',
+};
 const retention = 12 * 60 * 60 * 1000;
 const maxUploadBytes = 200_000_000;
 const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.mpeg', '.mpg']);
@@ -126,7 +132,7 @@ async function sendFile(response, job) {
   job.readers += 1;
   try {
     response.writeHead(200, {
-      'Content-Type': job.format === 'mp3' ? 'audio/mpeg' : job.format === 'mkv' ? 'video/x-matroska' : 'video/mp4',
+      'Content-Type': outputTypes[job.format] ?? 'application/octet-stream',
       'Content-Length': job.size,
       'Content-Disposition': fileHeader(job),
     });
@@ -159,7 +165,7 @@ async function handle(request, response) {
     return response.end(method === 'HEAD' ? undefined : content);
   }
   if (method === 'GET' && path === '/api/status') {
-    return json(response, 200, { hosted, missing, job: publicJob(active ?? latest) });
+    return json(response, 200, { hosted, missing, compressionMissing, job: publicJob(active ?? latest) });
   }
   if (method === 'POST' && path === '/api/uploads') {
     if (request.headers['content-type'] !== 'application/octet-stream') {
@@ -195,7 +201,7 @@ async function handle(request, response) {
     if (length > maxUploadBytes) {
       return json(response, 413, { error: 'Files must be 200 MB or smaller.' });
     }
-    if (missing.length) return json(response, 503, { error: `Missing ${missing.join(', ')}. Install the media tools first.` });
+    if (compressionMissing.length) return json(response, 503, { error: `Missing ${compressionMissing.join(', ')}. Install the media tools first.` });
     if (active || shuttingDown) return json(response, 409, { error: 'A conversion is already in progress.' });
     const id = randomUUID();
     const job = {
