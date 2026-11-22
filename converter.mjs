@@ -103,9 +103,11 @@ export async function convertFile(tools, job, dir) {
 
     // Copy compatible encoded streams instead of introducing a lossy re-encode.
     const audioCopy = isAudio && ({
-      mp3: 'mp3', wav: 'pcm_s16le', m4a: 'aac', flac: 'flac',
-      ogg: 'vorbis', opus: 'opus',
-    })[target] === audio.codec_name;
+      mp3: ['mp3'],
+      wav: ['pcm_u8', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_f32le', 'pcm_f64le'],
+      m4a: ['aac', 'alac'],
+      flac: ['flac'], ogg: ['vorbis'], opus: ['opus'],
+    })[target].includes(audio.codec_name);
     const videoCopy = !isAudio && !isImage && target !== 'gif'
       && ['mp4', 'mov', 'mkv'].includes(target)
       && video.codec_name === 'h264' && video.pix_fmt === 'yuv420p'
