@@ -53,8 +53,9 @@ test('upload API accepts a video, compresses it and serves the output', async t 
     },
     body: data,
   });
-  assert.equal(response.status, 202, await response.text());
-  const { job: submitted } = await response.json();
+  const responseText = await response.text();
+  assert.equal(response.status, 202, responseText);
+  const { job: submitted } = JSON.parse(responseText);
   assert.equal(submitted.state, 'converting');
   let completed;
   for (let attempt = 0; attempt < 80; attempt += 1) {
