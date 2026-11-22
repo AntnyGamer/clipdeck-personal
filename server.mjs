@@ -30,7 +30,7 @@ const stash = await mkdtemp(join(tmpdir(), 'clipdeck-'));
 const tools = await findTools(root);
 const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
 const retention = 12 * 60 * 60 * 1000;
-const maxUploadBytes = 200 * 1024 * 1024;
+const maxUploadBytes = 200_000_000;
 const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.mpeg', '.mpg']);
 const jobs = new Map();
 const activeStates = new Set(['uploading', 'checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
