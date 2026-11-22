@@ -72,19 +72,37 @@
           <p class="hint">MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. Maximum file size: 200 MB. The original stays on your device.</p>
 
           <fieldset class="form-section">
-            <legend>Compression level</legend>
+            <legend>Size goal</legend>
+            <div class="goal-modes">
+              <label><input type="radio" name="goal" value="auto"> Automatic</label>
+              <label><input type="radio" name="goal" value="percent" checked> Reduce by %</label>
+              <label><input type="radio" name="goal" value="mb"> Target MB</label>
+            </div>
+            <div class="goal-input">
+              <label for="goal-value" id="goal-value-label">Reduction goal (%)</label>
+              <input id="goal-value" name="goal-value" type="number" min="1" max="95" step="1" value="25" required>
+            </div>
+            <p class="hint">A size goal is approximate. Achieving it may require some quality loss.</p>
+          </fieldset>
+
+          <fieldset class="form-section">
+            <legend>Quality preference</legend>
             <div class="preset-list">
               <label class="preset-option">
+                <input type="radio" name="preset" value="lossless">
+                <span><strong>Strictly lossless</strong><span class="format-description">Copy audio and video unchanged. A smaller target may be impossible; output is MKV.</span></span>
+              </label>
+              <label class="preset-option">
+                <input type="radio" name="preset" value="best" checked>
+                <span><strong>Prefer lossless</strong><span class="format-description">Try a lossless copy first, then re-encode only if needed to pursue the goal.</span></span>
+              </label>
+              <label class="preset-option">
+                <input type="radio" name="preset" value="balanced">
+                <span><strong>Balanced</strong><span class="format-description">Use MP4 with up to 1080p video.</span></span>
+              </label>
+              <label class="preset-option">
                 <input type="radio" name="preset" value="small">
-                <span><strong>Smaller file</strong><span class="format-description">More compression · up to 720p</span></span>
-              </label>
-              <label class="preset-option">
-                <input type="radio" name="preset" value="balanced" checked>
-                <span><strong>Balanced</strong><span class="format-description">Good balance of quality and size · up to 1080p</span></span>
-              </label>
-              <label class="preset-option">
-                <input type="radio" name="preset" value="quality">
-                <span><strong>Higher quality</strong><span class="format-description">Lighter compression · keep original resolution</span></span>
+                <span><strong>Prioritize file size</strong><span class="format-description">Use MP4 with up to 720p video.</span></span>
               </label>
             </div>
           </fieldset>
