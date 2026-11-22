@@ -49,7 +49,8 @@ class MediaError extends Error {}
 
 export function run(exe, args, job, options = {}) {
   if (job.cancelled) return Promise.reject(new MediaError('This conversion was cancelled.'));
-  const { timeout = 0, onLine, capture = false, input = false } = options;
+  const { timeout = 0, onLine, capture = false, input = false,
+    timeoutMessage = 'The media tool took too long to respond.' } = options;
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, { env: mediaEnv, windowsHide: true, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -83,7 +84,7 @@ export function run(exe, args, job, options = {}) {
       clearTimeout(timer);
       if (job.child === child) job.child = null;
       if (job.cancelled) reject(new MediaError('This conversion was cancelled.'));
-      else if (timedOut) reject(new MediaError('YouTube took too long to respond. Try the link again.'));
+      else if (timedOut) reject(new MediaError(timeoutMessage));
       else if (tooMuchOutput) reject(new MediaError('YouTube returned too much data for this link.'));
       else if (code !== 0) reject(new Error(error.trim() || `${exe} exited with status ${code}`));
       else resolve(output);
@@ -99,7 +100,7 @@ function ytArgs(tools) {
 
 async function inspect(url, tools, job) {
   try {
-    const raw = await run(tools['yt-dlp'], [...ytArgs(tools), '--quiet', '--skip-download', '--dump-single-json', '--', url], job, { capture: true, timeout: 90000 });
+    const raw = await run(tools['yt-dlp'], [...ytArgs(tools), '--quiet', '--skip-download', '--dump-single-json', '--', url], job, { capture: true, timeout: 90000, timeoutMessage: 'YouTube took too long to respond. Try the link again.' });
     return JSON.parse(raw);
   } catch (error) {
     if (error instanceof MediaError) throw error;
