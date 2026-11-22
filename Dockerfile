@@ -19,7 +19,7 @@ RUN apt-get update \
     && rm "${asset}" yt-dlp-checksums
 
 WORKDIR /app
-COPY media.mjs server.mjs ./
+COPY media.mjs converter.mjs server.mjs ./
 COPY public ./public
 USER node
 ENV NODE_ENV=production CLIPDECK_HOSTED=1
