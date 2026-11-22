@@ -103,9 +103,14 @@ function jobText(current) {
     case 'ready': {
       if (current.kind === 'upload' && current.originalSize) {
         const saved = (100 * (current.originalSize - current.size) / current.originalSize).toFixed(1);
+        const goalBytes = current.goalKind === 'percent'
+          ? current.originalSize * (100 - current.goalValue) / 100
+          : current.goalKind === 'mb' ? current.goalValue * 1000000 : null;
         return [`${current.format.toUpperCase()} · ${sizeLabel(current.size)} (original ${sizeLabel(current.originalSize)})`,
           current.lossless ? 'No quality loss' : 'Re-encoded',
-          Number(saved) > 0 ? `${saved}% smaller` : 'Not smaller', current.notice].filter(Boolean).join(' · ');
+          Number(saved) > 0 ? `${saved}% smaller` : 'Not smaller',
+          goalBytes != null ? `Goal ${sizeLabel(goalBytes)} · ${current.size <= goalBytes ? 'met' : 'missed'}` : null,
+          current.notice].filter(Boolean).join(' · ');
       }
       return [`${current.format.toUpperCase()} · ${sizeLabel(current.size)}`, current.notice].filter(Boolean).join(' · ');
     }
