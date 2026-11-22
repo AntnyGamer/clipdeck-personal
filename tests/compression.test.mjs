@@ -30,12 +30,21 @@ test('compresses uploaded videos with lossless and target-size choices', async t
 
   const lossless = await runCase('lossless', 'lossless', 'auto', 0);
   assert.equal(lossless.lossless, true);
-  assert.equal(lossless.job.format, 'mkv');
+  assert.ok(lossless.size <= originalSize, 'Lossless mode should never increase file size.');
+  assert.ok(['mkv', 'mp4'].includes(lossless.job.format));
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', lossless.file]));
   assert.deepEqual(probe.streams.map(stream => stream.codec_name), ['h264', 'aac']);
 
   await assert.rejects(runCase('strict-target', 'lossless', 'percent', 50),
     /Lossless compression cannot meet that size goal/);
+  for (const quality of ['lossless', 'best']) {
+    const result = await runCase(`already-small-${quality}`, quality, 'mb', 100);
+    assert.equal(result.lossless, true);
+    assert.equal(result.size, originalSize);
+    assert.equal(result.job.format, 'mp4');
+    assert.equal(result.file, join(root, `already-small-${quality}`, 'upload.mp4'));
+  }
+
 
   const targeted = await runCase('percent-target', 'best', 'percent', 25);
   assert.equal(targeted.lossless, false);
