@@ -34,6 +34,7 @@ let compressionReady = false;
 let commandRunning = false;
 let uploadRequest = null;
 let conversionCatalog = null;
+let selectedSourceFile = null;
 const savedGoals = { percent: 25, mb: 20 };
 let pollTimer;
 let refreshing = false;
@@ -123,7 +124,8 @@ function jobText(current) {
           goalBytes != null ? `Goal ${sizeLabel(goalBytes)} · ${current.size <= goalBytes ? 'met' : 'missed'}` : null,
           current.notice].filter(Boolean).join(' · ');
       }
-      return [current.kind === 'convert' ? `Converted to ${current.format.toUpperCase()} · ${sizeLabel(current.size)}`
+      return [current.kind === 'convert'
+        ? `${current.originalPreserved ? 'Saved as' : 'Converted to'} ${current.format.toUpperCase()} · ${sizeLabel(current.size)}${current.originalSize ? ` (original ${sizeLabel(current.originalSize)})` : ''}`
         : `${current.format.toUpperCase()} · ${sizeLabel(current.size)}`, current.notice].filter(Boolean).join(' · ');
     }
     default: return 'Your file will appear here when it’s ready.';
@@ -146,7 +148,7 @@ function renderJob(current) {
   download.hidden = state !== 'ready';
   if (!download.hidden) {
     download.href = `/api/jobs/${job.id}/file`;
-    setText(download, job.originalPreserved ? 'Download original' : `Download ${job.format.toUpperCase()}`);
+    setText(download, job.originalPreserved && job.kind !== 'convert' ? 'Download original' : `Download ${job.format.toUpperCase()}`);
   } else {
     download.removeAttribute('href');
   }
@@ -252,11 +254,13 @@ function showAvailableFormats() {
   const file = converterFile.files[0];
   const extension = file && fileExtension(file.name);
   const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
-  const previous = targetSelect.value;
-  targetSelect.replaceChildren();
+  const previous = file === selectedSourceFile ? targetSelect.value : '';
+  selectedSourceFile = file;
+  targetSelect.replaceChildren(new Option('Choose an output format', ''));
   if (!file || !category) {
     targetSelect.add(new Option('Choose a supported file first', ''));
     targetSelect.disabled = true;
+    targetSelect.options[0].textContent = 'Choose a supported file first';
     setText(conversionHint, file ? 'This file type is not supported yet. Choose a video, audio or image file.' : 'Choose a file to see compatible output formats.');
     updateSubmit();
     return;
@@ -265,7 +269,8 @@ function showAvailableFormats() {
   const names = { video: 'Video', audio: 'Audio', image: 'Images' };
   for (const [group, extensions] of Object.entries(category.outputs)) {
     const matching = extensions.filter(format => format !== extension
-      && (format.includes(search) || (names[group] ?? group).toLowerCase().includes(search)));
+      && ([format, { jpg: 'jpeg', tiff: 'tif', mkv: 'matroska', mov: 'quicktime' }[format] ?? '']
+        .some(label => label.includes(search)) || (names[group] ?? group).toLowerCase().includes(search)));
     if (!matching.length) continue;
     const list = document.createElement('optgroup');
     list.label = names[group] ?? group;
@@ -274,10 +279,10 @@ function showAvailableFormats() {
     }
     targetSelect.append(list);
   }
-  const formats = Array.from(targetSelect.options).map(option => option.value);
-  if (!formats.length) targetSelect.add(new Option('No matching output formats', ''));
+  const formats = Array.from(targetSelect.options).map(option => option.value).filter(Boolean);
+  if (!formats.length) targetSelect.options[0].textContent = 'No matching output formats';
   targetSelect.disabled = !formats.length;
-  if (formats.includes(previous)) targetSelect.value = previous;
+  targetSelect.value = formats.includes(previous) ? previous : '';
   setText(conversionHint, formats.length
     ? `Selected ${extension.toUpperCase()} · ${sizeLabel(file.size)}. Changing formats may affect quality or remove video/audio tracks.`
     : 'No matching formats. Clear your search or try another file.');
