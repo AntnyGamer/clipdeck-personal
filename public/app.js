@@ -258,7 +258,6 @@ function showAvailableFormats() {
   selectedSourceFile = file;
   targetSelect.replaceChildren(new Option('Choose an output format', ''));
   if (!file || !category) {
-    targetSelect.add(new Option('Choose a supported file first', ''));
     targetSelect.disabled = true;
     targetSelect.options[0].textContent = 'Choose a supported file first';
     setText(conversionHint, file ? 'This file type is not supported yet. Choose a video, audio or image file.' : 'Choose a file to see compatible output formats.');
@@ -267,10 +266,11 @@ function showAvailableFormats() {
   }
   const search = targetSearch.value.trim().toLowerCase();
   const names = { video: 'Video', audio: 'Audio', image: 'Images' };
+  const aliases = { jpg: 'jpeg', tiff: 'tif', mkv: 'matroska', mov: 'quicktime' };
   for (const [group, extensions] of Object.entries(category.outputs)) {
     const matching = extensions.filter(format => format !== extension
-      && ([format, { jpg: 'jpeg', tiff: 'tif', mkv: 'matroska', mov: 'quicktime' }[format] ?? '']
-        .some(label => label.includes(search)) || (names[group] ?? group).toLowerCase().includes(search)));
+      && (format.includes(search) || aliases[format]?.includes(search)
+        || (names[group] ?? group).toLowerCase().includes(search)));
     if (!matching.length) continue;
     const list = document.createElement('optgroup');
     list.label = names[group] ?? group;
