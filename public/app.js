@@ -313,7 +313,7 @@ function startCompression(event) {
   const preset = compressForm.elements.preset.value;
   const params = new URLSearchParams({ preset, goal, value: String(value) });
   uploadMedia(file, `/api/uploads?${params}`, 'upload', 'mp4');
-
+}
 
 function uploadMedia(file, path, kind, format) {
   const xhr = new XMLHttpRequest();
