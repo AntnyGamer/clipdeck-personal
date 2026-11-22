@@ -32,7 +32,7 @@ const tools = await findTools(root);
 const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
 const compressionMissing = missing.filter(tool => tool !== 'yt-dlp');
 const outputTypes = {
-  mp3: 'audio/mpeg', mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
+  mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
   mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
   wmv: 'video/x-ms-wmv', mpeg: 'video/mpeg', mpg: 'video/mpeg', gif: 'image/gif',
   mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
