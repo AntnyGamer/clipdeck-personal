@@ -1,0 +1,24 @@
+name: Verify Clipdeck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.mjs
+          node --check media.mjs
+          node --check public/app.js
+      - name: Test video compression
+        run: |
+          ffmpeg -version
+          node --test tests/compression.test.mjs
