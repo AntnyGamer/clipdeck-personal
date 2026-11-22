@@ -59,6 +59,28 @@ test('converts video, audio, and image files without changing the input', async 
   await check('image-to-webp', 'png', 'webp', 'webp');
   await check('video-to-gif', 'mp4', 'gif', 'gif');
 
+  // A different container must not force a lossy video/audio transcode.
+  function streamHash(file, stream) {
+    return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file,
+      '-map', `0:${stream}:0`, `-c:${stream}`, 'copy', '-f', 'hash', '-hash', 'sha256', '-'],
+    { encoding: 'utf8' }).trim();
+  }
+  async function convertOriginal(name, target) {
+    const dir = join(root, name);
+    await mkdir(dir);
+    await copyFile(video, join(dir, 'upload.mp4'));
+    return convertFile(tools, { extension: '.mp4', targetFormat: target }, dir);
+  }
+
+  const remuxed = await convertOriginal('lossless-mkv', 'mkv');
+  assert.match(remuxed.notice, /without re-encoding/);
+  assert.equal(streamHash(remuxed.file, 'v'), streamHash(video, 'v'));
+  assert.equal(streamHash(remuxed.file, 'a'), streamHash(video, 'a'));
+
+  const extracted = await convertOriginal('lossless-m4a', 'm4a');
+  assert.match(extracted.notice, /without re-encoding/);
+  assert.equal(streamHash(extracted.file, 'a'), streamHash(video, 'a'));
+
   for (const [extension, target] of [['jpeg', 'jpg'], ['tif', 'tiff']]) {
     const imageFile = join(root, `photo.${extension}`);
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', image,
