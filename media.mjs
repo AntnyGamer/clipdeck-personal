@@ -303,7 +303,7 @@ export async function compressVideo(tools, job, dir) {
     const preferLossless = job.quality === 'best';
     const keepOriginal = notice => {
       job.format = job.extension.slice(1);
-      return { file: input, size: job.originalSize, lossless: true, notice };
+      return { file: input, size: job.originalSize, lossless: true, originalPreserved: true, notice };
     };
     if ((isLossless || preferLossless) && desired != null && job.originalSize <= desired) {
       return keepOriginal('The original already meets your size goal.');
