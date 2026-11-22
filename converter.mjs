@@ -101,11 +101,24 @@ export async function convertFile(tools, job, dir) {
     const isImage = Object.hasOwn(imageOptions, target);
     if (isAudio && !audio) throw new ConversionError('This file has no audio track to convert.');
 
+    // Copy compatible encoded streams instead of introducing a lossy re-encode.
+    const audioCopy = isAudio && ({
+      mp3: ['mp3'],
+      wav: ['pcm_u8', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_f32le', 'pcm_f64le'],
+      m4a: ['aac', 'alac'],
+      flac: ['flac'], ogg: ['vorbis'], opus: ['opus'],
+    })[target].includes(audio.codec_name);
+    const videoCopy = !isAudio && !isImage && target !== 'gif'
+      && ['mp4', 'mov', 'mkv'].includes(target)
+      && video.codec_name === 'h264' && video.pix_fmt === 'yuv420p'
+      && (!audio || audio.codec_name === 'aac');
+
     const duration = Number(metadata.format?.duration);
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2', '-filter_threads', '1',
       '-progress', 'pipe:1', '-nostats', '-i', input, '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn'];
     if (isAudio) {
-      args.push('-map', `0:${audio.index}`, '-vn', ...audioOptions[target]);
+      args.push('-map', `0:${audio.index}`, '-vn',
+        ...(audioCopy ? ['-c:a', 'copy'] : audioOptions[target]));
     } else if (isImage) {
       args.push('-map', `0:${video.index}`, '-an', '-frames:v', '1', ...imageOptions[target]);
     } else if (target === 'gif') {
@@ -113,12 +126,14 @@ export async function convertFile(tools, job, dir) {
         "fps=12,scale=w='min(640,iw)':h='min(640,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos",
         '-loop', '0');
     } else {
-      args.push('-map', `0:${video.index}`, ...videoOptions[target]);
+      args.push('-map', `0:${video.index}`,
+        ...(videoCopy ? ['-c:v', 'copy'] : videoOptions[target]));
       if (audio) {
         const codec = target === 'webm' ? ['-c:a', 'libopus', '-b:a', '128k']
           : target === 'avi' ? ['-c:a', 'libmp3lame', '-b:a', '192k']
             : ['-c:a', 'aac', '-b:a', '192k'];
-        args.push('-map', `0:${audio.index}`, ...codec);
+        args.push('-map', `0:${audio.index}`,
+          ...(videoCopy ? ['-c:a', 'copy'] : codec));
       }
       if (target === 'mp4' || target === 'mov') args.push('-movflags', '+faststart');
     }
@@ -131,7 +146,8 @@ export async function convertFile(tools, job, dir) {
     });
     const { size } = await stat(output);
     if (!size) throw new Error('Empty converted output');
-    return { file: output, size, format: target };
+    return { file: output, size, format: target,
+      notice: audioCopy || videoCopy ? 'Existing media streams copied without re-encoding.' : undefined };
   } catch (error) {
     if (error instanceof ConversionError || job.cancelled) throw error;
     if (/space|disk full|no space left/i.test(error.message)) {

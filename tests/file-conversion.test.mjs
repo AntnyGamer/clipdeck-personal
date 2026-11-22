@@ -50,14 +50,69 @@ test('converts video, audio, and image files without changing the input', async 
     assert.ok(JSON.parse(raw).streams.some(stream => stream.codec_name === expectedCodec),
       `Expected ${expectedCodec} in ${source} to ${target} output`);
     assert.equal((await stat(files[source])).size, originalSizes[source]);
+    return output;
   }
 
-  await check('video-to-webm', 'mp4', 'webm', 'vp9');
+  const webm = await check('video-to-webm', 'mp4', 'webm', 'vp9');
+  assert.equal(webm.notice, undefined, 'Incompatible output codec must still re-encode');
   await check('video-to-audio', 'mp4', 'mp3', 'mp3');
   await check('audio-to-flac', 'wav', 'flac', 'flac');
   await check('image-to-jpg', 'png', 'jpg', 'mjpeg');
   await check('image-to-webp', 'png', 'webp', 'webp');
   await check('video-to-gif', 'mp4', 'gif', 'gif');
+
+  // A different container must not force a lossy video/audio transcode.
+  function streamHash(file, stream) {
+    return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file,
+      '-map', `0:${stream}:0`, `-c:${stream}`, 'copy', '-f', 'hash', '-hash', 'sha256', '-'],
+    { encoding: 'utf8' }).trim();
+  }
+  async function convertOriginal(name, target) {
+    const dir = join(root, name);
+    await mkdir(dir);
+    await copyFile(video, join(dir, 'upload.mp4'));
+    return convertFile(tools, { extension: '.mp4', targetFormat: target }, dir);
+  }
+
+  const remuxed = await convertOriginal('lossless-mkv', 'mkv');
+  assert.match(remuxed.notice, /without re-encoding/);
+  assert.equal(streamHash(remuxed.file, 'v'), streamHash(video, 'v'));
+  assert.equal(streamHash(remuxed.file, 'a'), streamHash(video, 'a'));
+
+  const extracted = await convertOriginal('lossless-m4a', 'm4a');
+  assert.match(extracted.notice, /without re-encoding/);
+  assert.equal(streamHash(extracted.file, 'a'), streamHash(video, 'a'));
+
+  const quicktime = await convertOriginal('lossless-mov', 'mov');
+  assert.match(quicktime.notice, /without re-encoding/);
+  assert.equal(streamHash(quicktime.file, 'v'), streamHash(video, 'v'));
+  assert.equal(streamHash(quicktime.file, 'a'), streamHash(video, 'a'));
+
+  const roundtripDir = join(root, 'mkv-to-mp4');
+  await mkdir(roundtripDir);
+  await copyFile(remuxed.file, join(roundtripDir, 'upload.mkv'));
+  const roundtrip = await convertFile(tools, { extension: '.mkv', targetFormat: 'mp4' }, roundtripDir);
+  assert.match(roundtrip.notice, /without re-encoding/);
+  assert.equal(streamHash(roundtrip.file, 'v'), streamHash(video, 'v'));
+  assert.equal(streamHash(roundtrip.file, 'a'), streamHash(video, 'a'));
+
+  for (const [codec, target] of [['alac', 'm4a'], ['pcm_s24le', 'wav']]) {
+    const source = join(root, `original-${codec}.mov`);
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=5',
+      '-f', 'lavfi', '-i', 'sine=frequency=250',
+      '-t', '0.5', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', codec, source]);
+    const dir = join(root, `copy-${codec}`);
+    await mkdir(dir);
+    await copyFile(source, join(dir, 'upload.mov'));
+    const output = await convertFile(tools, { extension: '.mov', targetFormat: target }, dir);
+    assert.match(output.notice, /without re-encoding/);
+    assert.equal(streamHash(output.file, 'a'), streamHash(source, 'a'));
+    const raw = execFileSync('ffprobe', ['-v', 'error',
+      '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', output.file],
+    { encoding: 'utf8' }).trim();
+    assert.equal(raw, codec);
+  }
 
   for (const [extension, target] of [['jpeg', 'jpg'], ['tif', 'tiff']]) {
     const imageFile = join(root, `photo.${extension}`);
