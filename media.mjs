@@ -6,6 +6,7 @@ const executable = process.platform === 'win32' ? '.exe' : '';
 const { CLIPDECK_PASSWORD, ...mediaEnv } = process.env;
 const videoId = /^[\w-]{11}$/;
 export const qualities = { mp4: [480, 720, 1080, 1440, 2160], mp3: [96, 128, 192, 256, 320] };
+export const fileProbeTimeout = process.env.CLIPDECK_HOSTED === '1' ? 20000 : 0;
 
 export function sourceUrl(input) {
   let url;
@@ -232,7 +233,7 @@ export async function finalize(input, tools, job, dir) {
   const output = join(dir, `result.${job.format}`);
   const temp = join(dir, `encoding.${job.format}`);
   try {
-    const raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input], job, { capture: true, timeout: 20000 });
+    const raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input], job, { capture: true, timeout: fileProbeTimeout });
     const { streams, format } = JSON.parse(raw);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
@@ -285,7 +286,7 @@ export async function compressVideo(tools, job, dir) {
     let raw;
     try {
       raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: 20000 });
+        job, { capture: true, timeout: fileProbeTimeout });
     } catch (error) {
       if (error instanceof MediaError) throw error;
       throw new MediaError('Could not read this video. Choose a supported, uncorrupted video file.');
