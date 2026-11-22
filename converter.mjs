@@ -89,6 +89,13 @@ export async function convertFile(tools, job, dir) {
       throw new ConversionError('The file does not contain the expected media track.');
     }
 
+    if ((job.extension === '.jpeg' && target === 'jpg') ||
+        (job.extension === '.tif' && target === 'tiff')) {
+      const { size } = await stat(input);
+      return { file: input, size, format: target, originalPreserved: true,
+        notice: 'Only the file extension changed; the original data was preserved.' };
+    }
+
     const isAudio = Object.hasOwn(audioOptions, target);
     const isImage = Object.hasOwn(imageOptions, target);
     if (isAudio && !audio) throw new ConversionError('This file has no audio track to convert.');
