@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="description" content="A private YouTube to MP4 and MP3 converter for videos, Shorts, and live streams.">
-  <title>Clipdeck · YouTube Converter</title>
+  <meta name="description" content="A private YouTube to MP4 and MP3 converter and video file compressor.">
+  <title>Clipdeck · Video Converter & Compressor</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -19,13 +19,17 @@
 
   <main class="shell">
     <div class="intro">
-      <h1>YouTube converter<span>.</span></h1>
-      <p>Save a video, Short, or live stream as MP4 or MP3.</p>
+      <h1>Video tools<span>.</span></h1>
+      <p>Convert YouTube videos or compress videos from your device.</p>
     </div>
 
     <div class="workspace">
-      <section class="panel control-panel" aria-label="Conversion settings">
-        <form id="convert-form">
+      <section class="panel control-panel" aria-label="Media tools">
+        <div class="mode-switch" role="tablist" aria-label="Choose a tool">
+          <button class="mode-tab" id="youtube-tab" type="button" role="tab" aria-selected="true" aria-controls="convert-form">YouTube converter</button>
+          <button class="mode-tab" id="upload-tab" type="button" role="tab" aria-selected="false" aria-controls="compress-form">Compress a video</button>
+        </div>
+        <form id="convert-form" role="tabpanel" aria-labelledby="youtube-tab">
           <label class="field-title" for="url">YouTube link</label>
           <div class="link-field">
             <input id="url" name="url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" required maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="source-hint">
@@ -60,8 +64,35 @@
           <div class="submit-row">
             <button id="convert" class="primary" type="submit" disabled>Convert to MP4</button>
           </div>
-          <p id="form-message" class="message" role="status" hidden></p>
         </form>
+
+        <form id="compress-form" role="tabpanel" aria-labelledby="upload-tab" hidden>
+          <label class="field-title" for="video-file">Video file</label>
+          <input class="file-field" id="video-file" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.wmv,.mpeg,.mpg" required>
+          <p class="hint">MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. Maximum file size: 200 MB. The original stays on your device.</p>
+
+          <fieldset class="form-section">
+            <legend>Compression level</legend>
+            <div class="preset-list">
+              <label class="preset-option">
+                <input type="radio" name="preset" value="small">
+                <span><strong>Smaller file</strong><span class="format-description">More compression · up to 720p</span></span>
+              </label>
+              <label class="preset-option">
+                <input type="radio" name="preset" value="balanced" checked>
+                <span><strong>Balanced</strong><span class="format-description">Good balance of quality and size · up to 1080p</span></span>
+              </label>
+              <label class="preset-option">
+                <input type="radio" name="preset" value="quality">
+                <span><strong>Higher quality</strong><span class="format-description">Lighter compression · keep original resolution</span></span>
+              </label>
+            </div>
+          </fieldset>
+          <div class="submit-row">
+            <button id="compress" class="primary" type="submit" disabled>Compress video</button>
+          </div>
+        </form>
+        <p id="form-message" class="message" role="status" hidden></p>
       </section>
 
       <section class="panel result-panel" aria-label="Conversion result">
@@ -89,7 +120,7 @@
       </section>
     </div>
 
-    <footer>Use Clipdeck for media you’re allowed to download.</footer>
+    <footer>Use Clipdeck for media you’re allowed to download or process.</footer>
   </main>
 </body>
 </html>
