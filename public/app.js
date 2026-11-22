@@ -24,6 +24,7 @@ const labels = {
 const working = new Set(['uploading', 'checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
 let job = null;
 let health = 'connecting';
+let compressionReady = false;
 let commandRunning = false;
 let uploadRequest = null;
 const savedGoals = { percent: 25, mb: 20 };
@@ -44,7 +45,7 @@ function message(text) {
 function updateSubmit() {
   const busy = working.has(job?.state);
   convertButton.disabled = health !== 'ready' || busy || commandRunning;
-  compressButton.disabled = health !== 'ready' || busy || commandRunning || !fileField.files.length
+  compressButton.disabled = !compressionReady || busy || commandRunning || !fileField.files.length
     || !fileField.files[0].size || fileField.files[0].size > maxUploadBytes;
   const label = commandRunning && !busy ? 'Connecting…' : `Convert to ${form.elements.format.value.toUpperCase()}`;
   setText(convertButton, busy ? 'Conversion in progress' : label);
@@ -168,15 +169,21 @@ async function refresh() {
     if (!response.ok) throw new Error('Host unreachable');
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
+    compressionReady = !(status.compressionMissing ?? status.missing).length;
     if (status.missing.length) {
-      showHealth('setup', 'Setup needed');
-      message(`Missing ${status.missing.join(', ')}. Run the Windows launcher or follow the setup guide.`);
+      showHealth('setup', compressionReady ? 'YouTube setup needed' : 'Setup needed');
+      message(compressionReady
+        ? 'YouTube downloads require yt-dlp. Video compression is still available.'
+        : `Missing ${status.missing.join(', ')}. Run the Windows launcher or follow the setup guide.`);
     } else {
       showHealth('ready', status.hosted ? 'Private converter online' : 'This device online');
     }
     renderJob(status.job);
   } catch {
-    if (priorRevision === revision && !commandRunning) showHealth('offline', 'Host offline');
+    if (priorRevision === revision && !commandRunning) {
+      compressionReady = false;
+      showHealth('offline', 'Host offline');
+    }
   } finally {
     refreshing = false;
     if (working.has(job?.state)) scheduleRefresh(1000);
