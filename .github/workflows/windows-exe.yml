@@ -1,0 +1,118 @@
+name: Build portable Windows EXE
+
+on:
+  pull_request:
+    paths:
+      - 'launcher/**'
+      - 'public/**'
+      - '*.mjs'
+      - '.github/workflows/windows-exe.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-executable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+
+      - name: Gather Windows runtime and media tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force payload | Out-Null
+          Copy-Item (Get-Command node).Source payload/node.exe
+          Copy-Item server.mjs,media.mjs,converter.mjs payload/
+          Copy-Item public payload/public -Recurse
+
+          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          curl.exe --fail --location --retry 3 --output $archive https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg download failed' }
+          $expanded = Join-Path $env:RUNNER_TEMP 'ffmpeg-expanded'
+          Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+          $ffmpeg = Get-ChildItem $expanded -Recurse -File -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobe = Get-ChildItem $expanded -Recurse -File -Filter ffprobe.exe | Select-Object -First 1
+          if (!$ffmpeg -or !$ffprobe) { throw 'FFmpeg build is incomplete' }
+          Copy-Item $ffmpeg.FullName payload/ffmpeg.exe
+          Copy-Item $ffprobe.FullName payload/ffprobe.exe
+
+          curl.exe --fail --location --retry 3 --output payload/yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          if ($LASTEXITCODE -ne 0) { throw 'yt-dlp download failed' }
+          Compress-Archive -Path payload/* -DestinationPath launcher/payload.zip -CompressionLevel Optimal
+
+      - name: Build self-contained Windows launcher
+        shell: pwsh
+        run: |
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X=main.version=$env:GITHUB_SHA" -o ClipDeck.exe ./launcher/main.go
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+
+      - name: Smoke-test actual EXE on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CLIPDECK_NO_BROWSER = '1'
+          $launcher = Start-Process -FilePath (Resolve-Path ./ClipDeck.exe) -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 100; $i++) {
+              Start-Sleep -Milliseconds 500
+              if ($launcher.HasExited) { throw 'Windows launcher exited unexpectedly' }
+              try {
+                $status = Invoke-RestMethod http://127.0.0.1:4174/api/status -TimeoutSec 2
+                if (!$status.hosted -and !$status.compressionMissing.Count -and !$status.missing.Count) {
+                  $ready = $true
+                  break
+                }
+              } catch {}
+            }
+            if (!$ready) { throw 'Packaged ClipDeck did not start or media tools are missing' }
+
+            $inputFile = Join-Path $env:RUNNER_TEMP 'clipdeck-exe-test.wav'
+            & ./payload/ffmpeg.exe -hide_banner -loglevel error -f lavfi -i sine=frequency=440 -t 1 -c:a pcm_s16le $inputFile
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to generate test file' }
+            $bytes = [System.IO.File]::ReadAllBytes($inputFile)
+            $response = Invoke-RestMethod 'http://127.0.0.1:4174/api/conversions?to=flac' -Method POST -ContentType 'application/octet-stream' -Headers @{ Origin='http://127.0.0.1:4174'; 'X-Clipdeck-Filename'='clipdeck-exe-test.wav' } -Body $bytes
+            if ($response.job.kind -ne 'convert') { throw 'Packaged file converter did not accept the upload' }
+            $complete = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              $status = Invoke-RestMethod http://127.0.0.1:4174/api/status -TimeoutSec 2
+              if ($status.job.state -eq 'failed') { throw "Conversion failed: $($status.job.error)" }
+              if ($status.job.state -eq 'ready') {
+                if ($status.job.format -ne 'flac' -or $status.job.size -le 0) { throw 'Invalid conversion output' }
+                $complete = $true
+                break
+              }
+            }
+            if (!$complete) { throw 'Packaged conversion timed out' }
+            Write-Host 'Standalone EXE launched and converted WAV to FLAC successfully'
+          } finally {
+            Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClipDeck-Windows-EXE
+          path: ClipDeck.exe
+          compression-level: 0
+          retention-days: 90
+
+      - name: Publish downloadable EXE release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $short = $env:GITHUB_SHA.Substring(0, 12)
+          gh release create "windows-$short" ./ClipDeck.exe --title "ClipDeck Windows $short" --notes "Self-contained portable Windows EXE with Node.js, FFmpeg, FFprobe, and yt-dlp bundled. Double-click to launch the local converter in your browser. No 200 MB upload cap when running locally. Built and smoke-tested on Windows from commit $env:GITHUB_SHA." --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
