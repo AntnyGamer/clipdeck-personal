@@ -1,4 +1,4 @@
-import { rename, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { run } from './media.mjs';
 
@@ -102,7 +102,7 @@ export async function convertFile(tools, job, dir) {
       args.push('-map', `0:${video.index}`, '-an', '-frames:v', '1', ...imageOptions[target]);
     } else if (target === 'gif') {
       args.push('-map', `0:${video.index}`, '-an', '-vf',
-        "fps=12,scale=w='if(gt(iw,ih),min(640,iw),-2)':h='if(gt(ih,iw),min(640,ih),-2)':flags=lanczos",
+        "fps=12,scale=w='min(640,iw)':h='min(640,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos",
         '-loop', '0');
     } else {
       args.push('-map', `0:${video.index}`, ...videoOptions[target]);
