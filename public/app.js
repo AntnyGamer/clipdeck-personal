@@ -202,10 +202,12 @@ async function refresh() {
       showAvailableFormats();
     }
     if (status.missing.length) {
+      if (health !== 'setup' && !byId('form-message').textContent) {
+        message(compressionReady
+          ? 'YouTube downloads require yt-dlp. File conversion and compression are still available.'
+          : `Missing ${status.missing.join(', ')}. Run the Windows launcher or follow the setup guide.`);
+      }
       showHealth('setup', compressionReady ? 'YouTube setup needed' : 'Setup needed');
-      message(compressionReady
-        ? 'YouTube downloads require yt-dlp. File conversion and compression are still available.'
-        : `Missing ${status.missing.join(', ')}. Run the Windows launcher or follow the setup guide.`);
     } else {
       showHealth('ready', status.hosted ? 'Private converter online' : 'This device online');
     }
