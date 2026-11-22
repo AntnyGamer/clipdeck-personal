@@ -48,6 +48,9 @@ for (const hasDownloader of [true, false]) test(
   assert.ok(status, 'Server did not respond.');
   assert.deepEqual(status.compressionMissing, []);
   assert.deepEqual(status.missing, hasDownloader ? [] : ['yt-dlp']);
+  const health = await fetch(`${base}/healthz`);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), { ready: true, youtubeReady: hasDownloader });
 
   const input = join(root, 'sample.mp4');
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error',
