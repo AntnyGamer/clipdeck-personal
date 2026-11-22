@@ -10,6 +10,10 @@ Clipdeck is a password-protected YouTube converter, video compressor, and media 
 
 Render wakes the app after an idle period. Keep the converter open while recording live, and download the result when it’s ready. Instance restarts clear temporary files. Your workspace shares free build time, bandwidth, and instance hours across services. With no payment method, Render enforces the limits by pausing builds or services. See [Render’s free plan limits](https://render.com/docs/free).
 
+## Download the Windows EXE
+
+The [latest Windows release](https://github.com/AntnyGamer/clipdeck-personal/releases/latest) contains a portable `ClipDeck.exe`. Download and double-click it to open ClipDeck locally in your browser. Node.js, FFmpeg, FFprobe, and yt-dlp are bundled; separate installations and a Render account are not required. On first launch the EXE unpacks its bundled tools to the current user's local application cache, and subsequent launches reuse them. It keeps a local server running while ClipDeck is open; close the `ClipDeck.exe` process using Task Manager to stop it. Launcher diagnostics are written to `%LOCALAPPDATA%\\ClipDeck\\launcher.log`. The browser connects only to `127.0.0.1:4174`. Windows Defender/SmartScreen may show an unknown-publisher warning because the executable is not code-signed.
+
 ## Run locally for development
 
 Put Node.js 22 or later, `yt-dlp`, `ffmpeg`, and `ffprobe` on your `PATH`. The official yt-dlp executable includes the YouTube JavaScript component. Run `node server.mjs` and open `http://127.0.0.1:4174`.
