@@ -85,8 +85,9 @@ export async function convertFile(tools, job, dir) {
     const audio = streams.find(stream => stream.codec_type === 'audio');
     const sourceCategory = Object.keys(conversionCatalog).find(name =>
       conversionCatalog[name].inputs.includes(job.extension.slice(1)));
-    if ((sourceCategory !== 'audio' && !video) || (sourceCategory === 'audio' && !audio)) {
-      throw new ConversionError('The file does not contain the expected media track.');
+    if ((sourceCategory !== 'audio' && !(video?.width > 0 && video?.height > 0)) ||
+        (sourceCategory === 'audio' && !audio)) {
+      throw new ConversionError('The file does not contain a valid media track.');
     }
 
     if ((job.extension === '.jpeg' && target === 'jpg') ||
