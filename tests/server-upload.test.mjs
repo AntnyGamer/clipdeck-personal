@@ -88,4 +88,45 @@ for (const hasDownloader of [true, false]) test(
   assert.equal(download.status, 200);
   assert.match(download.headers.get('content-disposition'), /compressed\.mp4/);
   assert.equal((await download.arrayBuffer()).byteLength, completed.size);
+
+  const invalid = await fetch(`${base}/api/conversions?to=png`, {
+    method: 'POST',
+    headers: {
+      Origin: base,
+      'Content-Type': 'application/octet-stream',
+      'X-Clipdeck-Filename': encodeURIComponent('sample.mp4'),
+    },
+    body: data,
+  });
+  assert.equal(invalid.status, 415, 'Incompatible conversions must be rejected.');
+
+  const convertResponse = await fetch(`${base}/api/conversions?to=webm`, {
+    method: 'POST',
+    headers: {
+      Origin: base,
+      'Content-Type': 'application/octet-stream',
+      'X-Clipdeck-Filename': encodeURIComponent('sample.mp4'),
+    },
+    body: data,
+  });
+  const convertText = await convertResponse.text();
+  assert.equal(convertResponse.status, 202, convertText);
+  const { job: convertJob } = JSON.parse(convertText);
+  assert.equal(convertJob.kind, 'convert');
+  let converted;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const status = await (await fetch(`${base}/api/status`)).json();
+    if (['ready', 'failed', 'cancelled'].includes(status.job?.state)) {
+      converted = status.job;
+      break;
+    }
+    await delay(150);
+  }
+  assert.equal(converted?.state, 'ready', converted?.error || 'File conversion timed out');
+  assert.equal(converted.format, 'webm');
+  const result = await fetch(`${base}/api/jobs/${convertJob.id}/file`);
+  assert.equal(result.status, 200);
+  assert.match(result.headers.get('content-type'), /video\/webm/);
+  assert.match(result.headers.get('content-disposition'), /converted\.webm/);
+  assert.equal((await result.arrayBuffer()).byteLength, converted.size);
 });

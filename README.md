@@ -1,6 +1,6 @@
 # Clipdeck
 
-Clipdeck is a password-protected YouTube converter and video compressor that works in a phone or desktop browser. It converts supported video, Shorts, and replay links to MP4 or MP3. For a supported active livestream, it starts at the live edge and exports the recorded portion when you select **Stop & save**.
+Clipdeck is a password-protected YouTube converter, video compressor, and media file converter that works in a phone or desktop browser. It converts supported video, Shorts, and replay links to MP4 or MP3. For a supported active livestream, it starts at the live edge and exports the recorded portion when you select **Stop & save**.
 
 ## Deploy on Render
 
@@ -35,3 +35,13 @@ Open **Compress a video**, select a local video up to **200 MB**, and choose a s
 When a size goal is selected, Clipdeck uses two-pass FFmpeg video encoding where needed. Exact size is not guaranteed; it shows the actual final size, savings percentage, and whether the file was re-encoded. The original file on your device remains untouched. Videos are uploaded to the Clipdeck server for processing, and temporary server files expire after 12 hours. Very large or lengthy conversions may exceed free hosting limits.
 
 Compression requires only `ffmpeg` and `ffprobe`; YouTube conversion also requires `yt-dlp`. If only the YouTube downloader is missing, local-file compression remains available.
+
+## Convert file formats
+
+Open **Convert file**, select a file up to **200 MB**, search by output format (for example, `MP4`, `WAV`, or `PNG`), and choose a compatible option from the grouped dropdown. Clipdeck shows output choices based on the selected input file. It uses FFmpeg without additional conversion dependencies.
+
+- **Video:** MP4, MOV, M4V, MKV, WEBM, AVI, WMV, MPEG, MPG, FLV, and TS inputs. Convert to MP4, MKV, WEBM, MOV, AVI, or GIF. If the video has audio, you can also export MP3, WAV, M4A, FLAC, OGG, or OPUS.
+- **Audio:** MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, WMA, AIFF, and AIF inputs. Convert to MP3, WAV, M4A, FLAC, OGG, or OPUS.
+- **Images:** PNG, JPG/JPEG, WEBP, BMP, and TIFF/TIF inputs. Convert to PNG, JPG, WEBP, BMP, or TIFF.
+
+Conversions are restricted to compatible types: changing an extension alone is not a valid conversion. For example, Clipdeck cannot convert a PDF to MP4, a DOCX to PDF, or an image to an audio file. **Document, archive, and arbitrary binary conversions are not supported.** Images are converted as individual still images, video-to-audio drops the video, and GIF output has no audio and uses a reduced frame rate and size. Re-encoding can change quality and file size. The original remains untouched; converted files use a `- converted` filename suffix. Output files expire from temporary server storage after 12 hours.

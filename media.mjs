@@ -46,7 +46,7 @@ export async function findTools(root) {
 
 class MediaError extends Error {}
 
-function run(exe, args, job, options = {}) {
+export function run(exe, args, job, options = {}) {
   if (job.cancelled) return Promise.reject(new MediaError('This conversion was cancelled.'));
   const { timeout = 0, onLine, capture = false, input = false } = options;
   return new Promise((resolve, reject) => {

@@ -7,6 +7,12 @@ const compressForm = byId('compress-form');
 const fileField = byId('video-file');
 const compressButton = byId('compress');
 const goalField = byId('goal-value');
+const converterForm = byId('file-convert-form');
+const converterFile = byId('convert-file');
+const targetSearch = byId('target-search');
+const targetSelect = byId('target-format');
+const converterButton = byId('convert-file-button');
+const conversionHint = byId('convert-hint');
 const maxUploadBytes = 200_000_000;
 const convertButton = byId('convert');
 const choices = byId('qualities');
@@ -27,6 +33,7 @@ let health = 'connecting';
 let compressionReady = false;
 let commandRunning = false;
 let uploadRequest = null;
+let conversionCatalog = null;
 const savedGoals = { percent: 25, mb: 20 };
 let pollTimer;
 let refreshing = false;
@@ -44,6 +51,9 @@ function message(text) {
 
 function updateSubmit() {
   const busy = working.has(job?.state);
+  converterButton.disabled = !compressionReady || busy || commandRunning || !converterFile.files.length
+    || !converterFile.files[0].size || converterFile.files[0].size > maxUploadBytes || !targetSelect.value;
+  setText(converterButton, busy ? 'Processing in progress' : 'Convert file');
   convertButton.disabled = health !== 'ready' || busy || commandRunning;
   compressButton.disabled = !compressionReady || busy || commandRunning || !fileField.files.length
     || !fileField.files[0].size || fileField.files[0].size > maxUploadBytes;
@@ -88,14 +98,14 @@ function sizeLabel(bytes) {
 
 function jobText(current) {
   switch (current.state) {
-    case 'uploading': return current.progress == null ? 'Uploading your video.' : `Uploading video · ${Math.floor(current.progress)}%`;
+    case 'uploading': return current.progress == null ? 'Uploading your file.' : `Uploading file · ${Math.floor(current.progress)}%`;
     case 'checking': return 'Reading the YouTube link.';
     case 'downloading': return current.progress == null ? 'Fetching media from YouTube.' : `Downloading source · ${Math.floor(current.progress)}%`;
     case 'connecting': return 'Waiting for the first live segment.';
     case 'recording': return `${timeLabel(current.recorded)} recorded. Stop & save to finish.`;
     case 'stopping': return 'Finishing the captured segment.';
     case 'converting': {
-      const action = current.kind === 'upload' ? 'Compressing video' : 'Preparing your file';
+      const action = current.kind === 'upload' ? 'Compressing video' : current.kind === 'convert' ? 'Converting file' : 'Preparing your file';
       return current.progress == null ? `${action}.` : `${action} · ${Math.floor(current.progress)}%`;
     }
     case 'cancelling': return 'Stopping the conversion.';
@@ -113,7 +123,8 @@ function jobText(current) {
           goalBytes != null ? `Goal ${sizeLabel(goalBytes)} · ${current.size <= goalBytes ? 'met' : 'missed'}` : null,
           current.notice].filter(Boolean).join(' · ');
       }
-      return [`${current.format.toUpperCase()} · ${sizeLabel(current.size)}`, current.notice].filter(Boolean).join(' · ');
+      return [current.kind === 'convert' ? `Converted to ${current.format.toUpperCase()} · ${sizeLabel(current.size)}`
+        : `${current.format.toUpperCase()} · ${sizeLabel(current.size)}`, current.notice].filter(Boolean).join(' · ');
     }
     default: return 'Your file will appear here when it’s ready.';
   }
@@ -170,10 +181,16 @@ async function refresh() {
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
     compressionReady = !(status.compressionMissing ?? status.missing).length;
+    if (!conversionCatalog && status.conversionCatalog) {
+      conversionCatalog = status.conversionCatalog;
+      converterFile.accept = Object.values(conversionCatalog)
+        .flatMap(group => group.inputs.map(extension => `.${extension}`)).join(',');
+      showAvailableFormats();
+    }
     if (status.missing.length) {
       showHealth('setup', compressionReady ? 'YouTube setup needed' : 'Setup needed');
       message(compressionReady
-        ? 'YouTube downloads require yt-dlp. Video compression is still available.'
+        ? 'YouTube downloads require yt-dlp. File conversion and compression are still available.'
         : `Missing ${status.missing.join(', ')}. Run the Windows launcher or follow the setup guide.`);
     } else {
       showHealth('ready', status.hosted ? 'Private converter online' : 'This device online');
@@ -216,11 +233,54 @@ async function command(path, data = {}) {
 }
 
 function showMode(next) {
-  const uploading = next === 'upload';
-  form.hidden = uploading;
-  compressForm.hidden = !uploading;
-  byId('youtube-tab').setAttribute('aria-selected', String(!uploading));
-  byId('upload-tab').setAttribute('aria-selected', String(uploading));
+  form.hidden = next !== 'youtube';
+  compressForm.hidden = next !== 'upload';
+  converterForm.hidden = next !== 'convert';
+  byId('live-help').hidden = next !== 'youtube';
+  for (const [mode, tab] of [['youtube', 'youtube-tab'], ['upload', 'upload-tab'], ['convert', 'file-tab']]) {
+    byId(tab).setAttribute('aria-selected', String(next === mode));
+  }
+  message('');
+  updateSubmit();
+}
+
+function fileExtension(filename) {
+  return filename.match(/\.([^.]+)$/)?.[1].toLowerCase() ?? '';
+}
+
+function showAvailableFormats() {
+  const file = converterFile.files[0];
+  const extension = file && fileExtension(file.name);
+  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  const previous = targetSelect.value;
+  targetSelect.replaceChildren();
+  if (!file || !category) {
+    targetSelect.add(new Option('Choose a supported file first', ''));
+    targetSelect.disabled = true;
+    setText(conversionHint, file ? 'This file type is not supported yet. Choose a video, audio or image file.' : 'Choose a file to see compatible output formats.');
+    updateSubmit();
+    return;
+  }
+  const search = targetSearch.value.trim().toLowerCase();
+  const names = { video: 'Video', audio: 'Audio', image: 'Images' };
+  for (const [group, extensions] of Object.entries(category.outputs)) {
+    const matching = extensions.filter(format => format !== extension
+      && (format.includes(search) || (names[group] ?? group).toLowerCase().includes(search)));
+    if (!matching.length) continue;
+    const list = document.createElement('optgroup');
+    list.label = names[group] ?? group;
+    for (const format of matching) {
+      list.append(new Option(format.toUpperCase(), format));
+    }
+    targetSelect.append(list);
+  }
+  const formats = Array.from(targetSelect.options).map(option => option.value);
+  if (!formats.length) targetSelect.add(new Option('No matching output formats', ''));
+  targetSelect.disabled = !formats.length;
+  if (formats.includes(previous)) targetSelect.value = previous;
+  setText(conversionHint, formats.length
+    ? `Selected ${extension.toUpperCase()} · ${sizeLabel(file.size)}. Changing formats may affect quality or remove video/audio tracks.`
+    : 'No matching formats. Clear your search or try another file.');
   updateSubmit();
 }
 
@@ -256,14 +316,18 @@ function startCompression(event) {
   }
   const preset = compressForm.elements.preset.value;
   const params = new URLSearchParams({ preset, goal, value: String(value) });
+  uploadMedia(file, `/api/uploads?${params}`, 'upload', 'mp4');
+}
+
+function uploadMedia(file, path, kind, format) {
   const xhr = new XMLHttpRequest();
   uploadRequest = xhr;
   commandRunning = true;
   revision += 1;
   clearTimeout(pollTimer);
   message('');
-  renderJob({ kind: 'upload', state: 'uploading', progress: 0, format: 'mp4', title: file.name });
-  xhr.open('POST', `/api/uploads?${params}`);
+  renderJob({ kind, state: 'uploading', progress: 0, format, title: file.name });
+  xhr.open('POST', path);
   xhr.setRequestHeader('Content-Type', 'application/octet-stream');
   xhr.setRequestHeader('X-Clipdeck-Filename', encodeURIComponent(file.name));
   xhr.upload.onprogress = event => {
@@ -277,16 +341,16 @@ function startCompression(event) {
     if (xhr.status >= 200 && xhr.status < 300 && data.job) renderJob(data.job);
     else {
       const error = data.error || 'The upload failed. Check that the server is online.';
-      renderJob({ kind: 'upload', state: 'failed', error, title: file.name });
+      renderJob({ kind, state: 'failed', error, title: file.name });
       message(error);
     }
   };
   xhr.onerror = () => {
     const error = 'The upload failed. Check your connection and try again.';
-    renderJob({ kind: 'upload', state: 'failed', title: file.name, error });
+    renderJob({ kind, state: 'failed', title: file.name, error });
     message(error);
   };
-  xhr.onabort = () => renderJob({ kind: 'upload', state: 'cancelled', title: file.name });
+  xhr.onabort = () => renderJob({ kind, state: 'cancelled', title: file.name });
   xhr.onloadend = () => {
     if (uploadRequest === xhr) uploadRequest = null;
     commandRunning = false;
@@ -294,6 +358,21 @@ function startCompression(event) {
     scheduleRefresh(250);
   };
   xhr.send(file);
+}
+
+function startFileConversion(event) {
+  event.preventDefault();
+  if (converterButton.disabled || !converterForm.reportValidity()) return;
+  const file = converterFile.files[0];
+  const target = targetSelect.value;
+  const extension = fileExtension(file.name);
+  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  if (!category || extension === target
+      || !Object.values(category.outputs).some(formats => formats.includes(target))) {
+    message('Choose a compatible output format for this file.');
+    return;
+  }
+  uploadMedia(file, `/api/conversions?to=${encodeURIComponent(target)}`, 'convert', target);
 }
 
 form.addEventListener('change', event => {
@@ -314,6 +393,14 @@ compressForm.addEventListener('change', event => {
 });
 byId('youtube-tab').addEventListener('click', () => showMode('youtube'));
 byId('upload-tab').addEventListener('click', () => showMode('upload'));
+byId('file-tab').addEventListener('click', () => showMode('convert'));
+converterFile.addEventListener('change', () => {
+  message(converterFile.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller.' : '');
+  showAvailableFormats();
+});
+targetSearch.addEventListener('input', showAvailableFormats);
+targetSelect.addEventListener('change', updateSubmit);
+converterForm.addEventListener('submit', startFileConversion);
 compressForm.addEventListener('submit', startCompression);
 byId('paste').addEventListener('click', async () => {
   try {
