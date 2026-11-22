@@ -3,7 +3,7 @@ name: Verify Clipdeck
 on:
   pull_request:
   push:
-    branches: [main, 'feature/**']
+    branches: [main]
 
 jobs:
   checks:
@@ -23,4 +23,4 @@ jobs:
       - name: Test video compression
         run: |
           ffmpeg -version
-          node --test tests/compression.test.mjs
+          node --test tests/*.test.mjs
