@@ -96,6 +96,24 @@ test('converts video, audio, and image files without changing the input', async 
   assert.equal(streamHash(roundtrip.file, 'v'), streamHash(video, 'v'));
   assert.equal(streamHash(roundtrip.file, 'a'), streamHash(video, 'a'));
 
+  for (const [codec, target] of [['alac', 'm4a'], ['pcm_s24le', 'wav']]) {
+    const source = join(root, `original-${codec}.mov`);
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=5',
+      '-f', 'lavfi', '-i', 'sine=frequency=250',
+      '-t', '0.5', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', codec, source]);
+    const dir = join(root, `copy-${codec}`);
+    await mkdir(dir);
+    await copyFile(source, join(dir, 'upload.mov'));
+    const output = await convertFile(tools, { extension: '.mov', targetFormat: target }, dir);
+    assert.match(output.notice, /without re-encoding/);
+    assert.equal(streamHash(output.file, 'a'), streamHash(source, 'a'));
+    const raw = execFileSync('ffprobe', ['-v', 'error',
+      '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', output.file],
+    { encoding: 'utf8' }).trim();
+    assert.equal(raw, codec);
+  }
+
   for (const [extension, target] of [['jpeg', 'jpg'], ['tif', 'tiff']]) {
     const imageFile = join(root, `photo.${extension}`);
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', image,
