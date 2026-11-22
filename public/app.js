@@ -108,7 +108,7 @@ function jobText(current) {
           ? current.originalSize * (100 - current.goalValue) / 100
           : current.goalKind === 'mb' ? current.goalValue * 1000000 : null;
         return [`${current.format.toUpperCase()} · ${sizeLabel(current.size)} (original ${sizeLabel(current.originalSize)})`,
-          current.lossless ? 'No quality loss' : 'Re-encoded',
+          current.originalPreserved ? 'Original unchanged' : current.lossless ? 'No quality loss' : 'Re-encoded',
           Number(saved) > 0 ? `${saved}% smaller` : 'Not smaller',
           goalBytes != null ? `Goal ${sizeLabel(goalBytes)} · ${current.size <= goalBytes ? 'met' : 'missed'}` : null,
           current.notice].filter(Boolean).join(' · ');
@@ -135,7 +135,7 @@ function renderJob(current) {
   download.hidden = state !== 'ready';
   if (!download.hidden) {
     download.href = `/api/jobs/${job.id}/file`;
-    setText(download, `Download ${job.format.toUpperCase()}`);
+    setText(download, job.originalPreserved ? 'Download original' : `Download ${job.format.toUpperCase()}`);
   } else {
     download.removeAttribute('href');
   }
