@@ -29,6 +29,12 @@ const expectedAuth = hosted && hash(`Basic ${Buffer.from(`clipdeck:${password}`)
 const stash = await mkdtemp(join(tmpdir(), 'clipdeck-'));
 const tools = await findTools(root);
 const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
+const compressionMissing = missing.filter(tool => tool !== 'yt-dlp');
+const outputTypes = {
+  mp3: 'audio/mpeg', mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
+  mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
+  wmv: 'video/x-ms-wmv', mpeg: 'video/mpeg', mpg: 'video/mpeg',
+};
 const retention = 12 * 60 * 60 * 1000;
 const maxUploadBytes = 200_000_000;
 const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.mpeg', '.mpg']);
@@ -55,8 +61,8 @@ function json(response, status, data) {
 
 function publicJob(job) {
   if (!job) return null;
-  const { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, live, recorded, error, notice } = job;
-  return { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, live, recorded, error, notice };
+  const { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, originalPreserved, live, recorded, error, notice } = job;
+  return { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, originalPreserved, live, recorded, error, notice };
 }
 
 function allowedOrigin(request, path) {
@@ -108,13 +114,13 @@ function cancel(job) {
   job.cancelled = true;
   job.state = 'cancelling';
   job.child?.kill();
-  if (job.state === 'cancelling' && job.request) job.request.destroy();
+  job.request?.destroy();
 }
 
 function fileHeader(job) {
   let title = (job.title || 'YouTube clip').replace(/[<>:"/\\|?*\p{Cc}\p{Cf}]/gu, '_').trim().replace(/[. ]+$/, '');
   if (!title) title = 'YouTube clip';
-  const suffix = job.kind === 'upload' ? 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
+  const suffix = job.kind === 'upload' ? job.originalPreserved ? 'original' : 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
   const filename = `${title} - ${suffix}.${job.format}`.toWellFormed();
   const fallback = filename.replace(/[^\x20-\x7E]/g, '_');
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`);
@@ -126,7 +132,7 @@ async function sendFile(response, job) {
   job.readers += 1;
   try {
     response.writeHead(200, {
-      'Content-Type': job.format === 'mp3' ? 'audio/mpeg' : job.format === 'mkv' ? 'video/x-matroska' : 'video/mp4',
+      'Content-Type': outputTypes[job.format] ?? 'application/octet-stream',
       'Content-Length': job.size,
       'Content-Disposition': fileHeader(job),
     });
@@ -145,7 +151,8 @@ async function handle(request, response) {
   response.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
   const path = (request.url ?? '').split('?')[0];
   const method = request.method;
-  if (method === 'GET' && path === '/healthz') return json(response, missing.length ? 503 : 200, { ready: !missing.length });
+  if (method === 'GET' && path === '/healthz') return json(response, compressionMissing.length ? 503 : 200,
+    { ready: !compressionMissing.length, youtubeReady: !missing.length });
   if (!allowedOrigin(request, path)) return json(response, 403, { error: 'Open Clipdeck from its configured address.' });
   if (hosted && !timingSafeEqual(hash(request.headers.authorization ?? ''), expectedAuth)) {
     response.setHeader('WWW-Authenticate', 'Basic realm="Clipdeck", charset="UTF-8"');
@@ -159,7 +166,7 @@ async function handle(request, response) {
     return response.end(method === 'HEAD' ? undefined : content);
   }
   if (method === 'GET' && path === '/api/status') {
-    return json(response, 200, { hosted, missing, job: publicJob(active ?? latest) });
+    return json(response, 200, { hosted, missing, compressionMissing, job: publicJob(active ?? latest) });
   }
   if (method === 'POST' && path === '/api/uploads') {
     if (request.headers['content-type'] !== 'application/octet-stream') {
@@ -195,7 +202,7 @@ async function handle(request, response) {
     if (length > maxUploadBytes) {
       return json(response, 413, { error: 'Files must be 200 MB or smaller.' });
     }
-    if (missing.length) return json(response, 503, { error: `Missing ${missing.join(', ')}. Install the media tools first.` });
+    if (compressionMissing.length) return json(response, 503, { error: `Missing ${compressionMissing.join(', ')}. Install the media tools first.` });
     if (active || shuttingDown) return json(response, 409, { error: 'A conversion is already in progress.' });
     const id = randomUUID();
     const job = {

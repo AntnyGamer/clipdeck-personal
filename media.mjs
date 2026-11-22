@@ -300,7 +300,15 @@ export async function compressVideo(tools, job, dir) {
       : job.goalKind === 'mb' ? Math.floor(job.goalValue * 1000000) : null;
     const desired = target == null ? null : Math.max(0, target);
     const isLossless = job.quality === 'lossless';
-    const wantCopy = isLossless || job.quality === 'best';
+    const preferLossless = job.quality === 'best';
+    const keepOriginal = notice => {
+      job.format = job.extension.slice(1);
+      return { file: input, size: job.originalSize, lossless: true, originalPreserved: true, notice };
+    };
+    if ((isLossless || preferLossless) && desired != null && job.originalSize <= desired) {
+      return keepOriginal('The original already meets your size goal.');
+    }
+    const wantCopy = isLossless || preferLossless;
     if (wantCopy) {
       const copyFile = join(dir, 'copy.mkv');
       try {
@@ -311,17 +319,18 @@ export async function compressVideo(tools, job, dir) {
         if (isLossless && desired != null && copySize > desired) {
           throw new MediaError('Lossless compression cannot meet that size goal. Choose Prefer lossless to allow re-encoding, or increase your goal.');
         }
-        if (isLossless || (desired != null && copySize <= desired) || (desired == null && copySize < job.originalSize)) {
+        if (copySize < job.originalSize && (desired == null || copySize <= desired)) {
           const output = join(dir, 'result.mkv');
           await rename(copyFile, output);
           job.format = 'mkv';
-          return {
-            file: output, size: copySize, lossless: true,
-            notice: copySize >= job.originalSize ? 'No size reduction was possible without re-encoding.' : undefined,
-          };
+          return { file: output, size: copySize, lossless: true };
+        }
+        if (desired == null) {
+          return keepOriginal('Lossless remuxing did not reduce the file size.');
         }
       } catch (error) {
         if (error instanceof MediaError) throw error;
+        if (desired == null) return keepOriginal('Lossless remuxing was unavailable; the original was preserved.');
         if (isLossless) throw new MediaError('This file could not be remuxed without quality loss. Try Prefer lossless instead.');
       }
     }
