@@ -25,7 +25,7 @@ For another Docker host, set `PORT`, `CLIPDECK_ORIGIN` to the site’s HTTPS ori
 
 ## Compress videos from your device
 
-Open **Compress a video**, select a local video up to **200 MB**, and choose a size goal: automatic, a 1–95% reduction, or a target of 0.1–200 MB (decimal MB). Choose a quality preference:
+Open **Compress a video**, select a video, and choose a size goal: automatic, a 1–95% reduction, or a target of at least 0.1 MB (decimal MB). **Local mode has no fixed upload-size or target-MB maximum; hosted mode limits uploads to 200 MB and target sizes to 200 MB.** Choose a quality preference:
 
 - **Strictly lossless** preserves audio and video without re-encoding. It keeps the original file if it already meets your target or remuxing cannot make it smaller; otherwise it saves an MKV. It can fail an unattainable smaller-size goal rather than silently lowering quality.
 - **Prefer lossless** (default) preserves the original file when it already meets the size goal, tries lossless remuxing first for smaller goals, and re-encodes to MP4 only if the goal requires it. With automatic compression, it never increases the size or re-encodes an already compressed file just to make it smaller.
@@ -38,10 +38,13 @@ Compression requires only `ffmpeg` and `ffprobe`; YouTube conversion also requir
 
 ## Convert file formats
 
-Open **Convert file**, select a file up to **200 MB**, search by output format (for example, `MP4`, `WAV`, or `PNG`), and choose a compatible option from the grouped dropdown. Clipdeck shows output choices based on the selected input file. It uses FFmpeg without additional conversion dependencies.
+Open **Convert file**, select a file (no fixed size limit locally; up to **200 MB** when hosted), search by output format (for example, `MP4`, `WAV`, or `PNG`), and choose a compatible option from the grouped dropdown. Clipdeck shows output choices based on the selected input file. It uses FFmpeg without additional conversion dependencies.
 
 - **Video:** MP4, MOV, M4V, MKV, WEBM, AVI, WMV, MPEG, MPG, FLV, and TS inputs. Convert to MP4, MKV, WEBM, MOV, AVI, or GIF. If the video has audio, you can also export MP3, WAV, M4A, FLAC, OGG, or OPUS.
 - **Audio:** MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, WMA, AIFF, and AIF inputs. Convert to MP3, WAV, M4A, FLAC, OGG, or OPUS.
 - **Images:** PNG, JPG/JPEG, WEBP, BMP, and TIFF/TIF inputs. Convert to PNG, JPG, WEBP, BMP, or TIFF.
 
 Conversions are restricted to compatible types: simply renaming an unrelated file extension is not a valid conversion. Equivalent extensions such as JPEG/JPG and TIF/TIFF are the exception; Clipdeck preserves the image bytes for those changes. For example, Clipdeck cannot convert a PDF to MP4, a DOCX to PDF, or an image to an audio file. **Document, archive, and arbitrary binary conversions are not supported.** Images are converted as individual still images, video-to-audio drops the video, and GIF output has no audio and uses a reduced frame rate and size. Re-encoding can change quality and file size. The original remains untouched; converted files use a `- converted` filename suffix. Output files expire from temporary server storage after 12 hours.
+
+
+**Large local files:** Local processing uses your computer's available disk space, RAM, CPU, and FFmpeg, and creates temporary files before downloading the result. There is no artificial file-size cap, but sufficiently large jobs may still fail if the disk fills or the input cannot be decoded. The Render upload cap remains 200 MB.
