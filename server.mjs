@@ -61,8 +61,8 @@ function json(response, status, data) {
 
 function publicJob(job) {
   if (!job) return null;
-  const { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, live, recorded, error, notice } = job;
-  return { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, live, recorded, error, notice };
+  const { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, originalPreserved, live, recorded, error, notice } = job;
+  return { id, kind, state, format, quality, goalKind, goalValue, progress, title, size, originalSize, lossless, originalPreserved, live, recorded, error, notice };
 }
 
 function allowedOrigin(request, path) {
@@ -120,7 +120,7 @@ function cancel(job) {
 function fileHeader(job) {
   let title = (job.title || 'YouTube clip').replace(/[<>:"/\\|?*\p{Cc}\p{Cf}]/gu, '_').trim().replace(/[. ]+$/, '');
   if (!title) title = 'YouTube clip';
-  const suffix = job.kind === 'upload' ? 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
+  const suffix = job.kind === 'upload' ? job.originalPreserved ? 'original' : 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
   const filename = `${title} - ${suffix}.${job.format}`.toWellFormed();
   const fallback = filename.replace(/[^\x20-\x7E]/g, '_');
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`);
