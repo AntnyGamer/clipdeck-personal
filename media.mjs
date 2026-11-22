@@ -274,17 +274,11 @@ export async function finalize(input, tools, job, dir) {
   }
 }
 
-export const compressionPresets = {
-  small: { resolution: 720, crf: 30, audioBitrate: 96 },
-  balanced: { resolution: 1080, crf: 26, audioBitrate: 128 },
-  quality: { resolution: null, crf: 22, audioBitrate: 160 },
-};
+export const compressionPresets = ['lossless', 'best', 'balanced', 'small'];
 
 export async function compressVideo(tools, job, dir) {
   const input = join(dir, `upload${job.extension}`);
-  const output = join(dir, 'result.mp4');
   const temp = join(dir, 'encoding.mp4');
-  const preset = compressionPresets[job.quality];
   job.state = 'converting';
   job.progress = null;
   try {
@@ -300,29 +294,81 @@ export async function compressVideo(tools, job, dir) {
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     if (!video?.width || !video?.height) throw new MediaError('This file has no valid video track.');
-    const duration = Number(format.duration);
-    const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1', '-nostats',
-      '-threads', '2', '-filter_threads', '1', '-i', input, '-map', `0:${video.index}`,
-      '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn',
-      '-c:v', 'libx264', '-threads:v', '2', '-preset', 'veryfast', '-crf', String(preset.crf), '-pix_fmt', 'yuv420p'];
-    if (preset.resolution && Math.min(video.width, video.height) > preset.resolution) {
-      const factor = `min(1,${preset.resolution}/min(iw,ih))`;
-      args.push('-vf', `scale=w='trunc(iw*${factor}/2)*2':h='trunc(ih*${factor}/2)*2'`);
+    const duration = Number(format.duration) || Number(video.duration);
+    const target = job.goalKind === 'percent'
+      ? Math.floor(job.originalSize * (100 - job.goalValue) / 100)
+      : job.goalKind === 'mb' ? Math.floor(job.goalValue * 1000000) : null;
+    const desired = target == null ? null : Math.max(0, target);
+    const isLossless = job.quality === 'lossless';
+    const wantCopy = isLossless || job.quality === 'best' || (desired != null && desired >= job.originalSize);
+    if (wantCopy) {
+      const copyFile = join(dir, 'copy.mkv');
+      try {
+        await run(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2',
+          '-i', input, '-map', `0:${video.index}`, '-map', '0:a?', '-map_metadata', '-1',
+          '-map_chapters', '-1', '-sn', '-dn', '-c', 'copy', copyFile], job);
+        const copySize = (await stat(copyFile)).size;
+        if (isLossless && desired != null && copySize > desired) {
+          throw new MediaError('Lossless compression cannot meet that size goal. Choose Prefer lossless to allow re-encoding, or increase your goal.');
+        }
+        if (isLossless || (desired != null && copySize <= desired) || (desired == null && copySize < job.originalSize)) {
+          const output = join(dir, 'result.mkv');
+          await rename(copyFile, output);
+          job.format = 'mkv';
+          return {
+            file: output, size: copySize, lossless: true,
+            notice: copySize >= job.originalSize ? 'No size reduction was possible without re-encoding.' : undefined,
+          };
+        }
+      } catch (error) {
+        if (error instanceof MediaError) throw error;
+        if (isLossless) throw new MediaError('This file could not be remuxed without quality loss. Try Prefer lossless instead.');
+      }
     }
-    if (audio) args.push('-map', `0:${audio.index}`, '-c:a', 'aac', '-b:a', `${preset.audioBitrate}k`, '-ac', '2');
-    args.push('-movflags', '+faststart', temp);
-    await run(tools.ffmpeg, args, job, {
-      onLine(line) {
-        const time = /^out_time_us=(\d+)/.exec(line);
-        if (time && duration > 0) job.progress = Math.min(99, +time[1] / 10000 / duration);
-      },
-    });
+    const ceiling = job.quality === 'small' ? 720 : job.quality === 'balanced' ? 1080 : null;
+    const resize = ceiling && Math.min(video.width, video.height) > ceiling
+      ? `scale=w='trunc(iw*min(1,${ceiling}/min(iw,ih))/2)*2':h='trunc(ih*min(1,${ceiling}/min(iw,ih))/2)*2'`
+      : null;
+    const base = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1',
+      '-nostats', '-threads', '2', '-filter_threads', '1', '-i', input,
+      '-map', `0:${video.index}`, '-map_metadata', '-1', '-map_chapters', '-1',
+      '-sn', '-dn', '-c:v', 'libx264', '-threads:v', '2', '-preset', 'veryfast', '-pix_fmt', 'yuv420p'];
+    if (resize) base.push('-vf', resize);
+    const progress = offset => line => {
+      const match = /^out_time_us=(\d+)/.exec(line);
+      if (match && duration > 0) job.progress = Math.min(99, offset + Number(match[1]) / 10000 / duration * (desired == null ? 1 : .5));
+    };
+    const audioFlags = audio ? ['-map', `0:${audio.index}`, '-c:a', 'aac', '-b:a', '128k', '-ac', '2'] : [];
+    if (desired == null) {
+      const crf = job.quality === 'small' ? 30 : job.quality === 'balanced' ? 25 : 20;
+      await run(tools.ffmpeg, [...base, '-crf', String(crf), ...audioFlags, '-movflags', '+faststart', temp],
+        job, { onLine: progress(0) });
+    } else {
+      if (!(duration > 0)) throw new MediaError('This video has no measurable duration, so a precise size goal cannot be calculated.');
+      const totalRate = Math.floor(desired * 8 / duration * .96);
+      const audioRate = audio ? Math.min(128000, Math.max(32000, Math.floor(totalRate * .15 / 1000) * 1000)) : 0;
+      const videoRate = totalRate - audioRate;
+      if (videoRate < 100000) throw new MediaError('This target is too small for usable video. Increase the size goal.');
+      const passLog = join(dir, 'video-pass');
+      const bitrate = `${Math.floor(videoRate / 1000)}k`;
+      await run(tools.ffmpeg, [...base, '-b:v', bitrate, '-pass', '1', '-passlogfile', passLog,
+        '-an', '-f', 'null', process.platform === 'win32' ? 'NUL' : '/dev/null'],
+        job, { onLine: progress(0) });
+      job.progress = 50;
+      const outputAudio = audio ? ['-map', `0:${audio.index}`, '-c:a', 'aac',
+        '-b:a', `${Math.floor(audioRate / 1000)}k`, '-ac', '2'] : [];
+      await run(tools.ffmpeg, [...base, '-b:v', bitrate, '-pass', '2', '-passlogfile', passLog,
+        ...outputAudio, '-movflags', '+faststart', temp], job, { onLine: progress(50) });
+    }
     const { size } = await stat(temp);
     if (!size) throw new Error('Empty compressed output.');
+    const output = join(dir, 'result.mp4');
     await rename(temp, output);
+    const missed = desired != null && size > desired;
     return {
-      file: output, size,
-      notice: size >= job.originalSize ? 'This setting did not reduce the file size.' : undefined,
+      file: output, size, lossless: false,
+      notice: missed ? 'The output exceeded your requested size; the goal is approximate.'
+        : size >= job.originalSize ? 'The new file is not smaller than the original.' : undefined,
     };
   } catch (error) {
     if (error instanceof MediaError) throw error;
