@@ -274,6 +274,65 @@ export async function finalize(input, tools, job, dir) {
   }
 }
 
+export const compressionPresets = {
+  small: { resolution: 720, crf: 30, audioBitrate: 96 },
+  balanced: { resolution: 1080, crf: 26, audioBitrate: 128 },
+  quality: { resolution: null, crf: 22, audioBitrate: 160 },
+};
+
+export async function compressVideo(tools, job, dir) {
+  const input = join(dir, `upload${job.extension}`);
+  const output = join(dir, 'result.mp4');
+  const temp = join(dir, 'encoding.mp4');
+  const preset = compressionPresets[job.quality];
+  job.state = 'converting';
+  job.progress = null;
+  try {
+    let raw;
+    try {
+      raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
+        job, { capture: true, timeout: 20000 });
+    } catch (error) {
+      if (error instanceof MediaError) throw error;
+      throw new MediaError('Could not read this video. Choose a supported, uncorrupted video file.');
+    }
+    const { streams = [], format = {} } = JSON.parse(raw);
+    const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
+    const audio = streams.find(stream => stream.codec_type === 'audio');
+    if (!video?.width || !video?.height) throw new MediaError('This file has no valid video track.');
+    const duration = Number(format.duration);
+    const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1', '-nostats',
+      '-threads', '2', '-filter_threads', '1', '-i', input, '-map', `0:${video.index}`,
+      '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn',
+      '-c:v', 'libx264', '-threads:v', '2', '-preset', 'veryfast', '-crf', String(preset.crf), '-pix_fmt', 'yuv420p'];
+    if (preset.resolution && Math.min(video.width, video.height) > preset.resolution) {
+      const factor = `min(1,${preset.resolution}/min(iw,ih))`;
+      args.push('-vf', `scale=w='trunc(iw*${factor}/2)*2':h='trunc(ih*${factor}/2)*2'`);
+    }
+    if (audio) args.push('-map', `0:${audio.index}`, '-c:a', 'aac', '-b:a', `${preset.audioBitrate}k`, '-ac', '2');
+    args.push('-movflags', '+faststart', temp);
+    await run(tools.ffmpeg, args, job, {
+      onLine(line) {
+        const time = /^out_time_us=(\d+)/.exec(line);
+        if (time && duration > 0) job.progress = Math.min(99, +time[1] / 10000 / duration);
+      },
+    });
+    const { size } = await stat(temp);
+    if (!size) throw new Error('Empty compressed output.');
+    await rename(temp, output);
+    return {
+      file: output, size,
+      notice: size >= job.originalSize ? 'This setting did not reduce the file size.' : undefined,
+    };
+  } catch (error) {
+    if (error instanceof MediaError) throw error;
+    if (/space|disk full|no space left/i.test(error.message)) {
+      throw new MediaError('The host ran out of storage while compressing the video.');
+    }
+    throw new MediaError('Could not compress this video. Try another file or compression level.');
+  }
+}
+
 export async function processMedia(tools, job, dir) {
   const info = await inspect(job.url, tools, job);
   if (job.cancelled) throw new MediaError('This conversion was cancelled.');
