@@ -1,12 +1,13 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
-import { findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
+import { compressVideo, compressionPresets, findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
 
 const root = import.meta.dirname;
 const hosted = process.env.CLIPDECK_HOSTED === '1';
@@ -29,8 +30,10 @@ const stash = await mkdtemp(join(tmpdir(), 'clipdeck-'));
 const tools = await findTools(root);
 const missing = ['yt-dlp', 'ffmpeg', 'ffprobe'].filter(tool => !tools[tool]);
 const retention = 12 * 60 * 60 * 1000;
+const maxUploadBytes = 200 * 1024 * 1024;
+const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm', '.avi', '.wmv', '.mpeg', '.mpg']);
 const jobs = new Map();
-const activeStates = new Set(['checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
+const activeStates = new Set(['uploading', 'checking', 'downloading', 'connecting', 'recording', 'stopping', 'converting', 'cancelling']);
 let latest = null;
 let active = null;
 let shuttingDown = false;
@@ -41,6 +44,10 @@ const assets = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
 ]);
 
+class UploadError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
 function json(response, status, data) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(data));
@@ -48,8 +55,8 @@ function json(response, status, data) {
 
 function publicJob(job) {
   if (!job) return null;
-  const { id, state, format, quality, progress, title, size, live, recorded, error, notice } = job;
-  return { id, state, format, quality, progress, title, size, live, recorded, error, notice };
+  const { id, kind, state, format, quality, progress, title, size, originalSize, live, recorded, error, notice } = job;
+  return { id, kind, state, format, quality, progress, title, size, originalSize, live, recorded, error, notice };
 }
 
 function allowedOrigin(request, path) {
@@ -71,20 +78,26 @@ async function readRequest(request) {
   try { return JSON.parse(body); } catch { return null; }
 }
 
-async function perform(job) {
+async function perform(job, worker = () => processMedia(tools, job, job.dir), uploadResponse) {
   try {
     await mkdir(job.dir);
-    const output = await processMedia(tools, job, job.dir);
+    const output = await worker();
     if (job.cancelled) throw new Error('This conversion was cancelled.');
     Object.assign(job, output, { progress: 100, state: 'ready' });
   } catch (error) {
     job.state = job.cancelled ? 'cancelled' : 'failed';
     if (!job.cancelled) {
-      job.error = error.constructor.name === 'MediaError' ? error.message : 'Could not create the conversion. Check the host’s available storage.';
+      job.error = error instanceof UploadError || error.constructor.name === 'MediaError'
+        ? error.message : 'Could not create the conversion. Check the host’s available storage.';
+    }
+    if (uploadResponse && !uploadResponse.headersSent && !uploadResponse.destroyed) {
+      json(uploadResponse, error instanceof UploadError ? error.status : 500,
+        { error: job.error || 'The upload was cancelled.' });
     }
   } finally {
     job.finished = Date.now();
-    active = null;
+    job.request = null;
+    if (active === job) active = null;
     const entries = await readdir(job.dir).catch(() => []);
     await Promise.allSettled(entries.filter(name => join(job.dir, name) !== job.file)
       .map(name => rm(join(job.dir, name), { force: true })));
@@ -95,12 +108,13 @@ function cancel(job) {
   job.cancelled = true;
   job.state = 'cancelling';
   job.child?.kill();
+  if (job.state === 'cancelling' && job.request) job.request.destroy();
 }
 
 function fileHeader(job) {
   let title = (job.title || 'YouTube clip').replace(/[<>:"/\\|?*\p{Cc}\p{Cf}]/gu, '_').trim().replace(/[. ]+$/, '');
   if (!title) title = 'YouTube clip';
-  const suffix = `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
+  const suffix = job.kind === 'upload' ? 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
   const filename = `${title} - ${suffix}.${job.format}`.toWellFormed();
   const fallback = filename.replace(/[^\x20-\x7E]/g, '_');
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`);
@@ -147,6 +161,70 @@ async function handle(request, response) {
   if (method === 'GET' && path === '/api/status') {
     return json(response, 200, { hosted, missing, job: publicJob(active ?? latest) });
   }
+  if (method === 'POST' && path === '/api/uploads') {
+    if (request.headers['content-type'] !== 'application/octet-stream') {
+      return json(response, 415, { error: 'Choose a video file to upload.' });
+    }
+    const preset = new URL(request.url, local).searchParams.get('preset');
+    if (!Object.hasOwn(compressionPresets, preset)) {
+      return json(response, 400, { error: 'Choose a supported compression level.' });
+    }
+    let filename;
+    try { filename = decodeURIComponent(request.headers['x-clipdeck-filename'] ?? ''); } catch { /* Invalid encoding. */ }
+    if (!filename || filename.length > 240 || /[\\/\\\\\\p{Cc}]/u.test(filename)) {
+      return json(response, 400, { error: 'Choose a video with a valid filename.' });
+    }
+    const extension = extname(filename).toLowerCase();
+    if (!videoExtensions.has(extension)) {
+      return json(response, 415, { error: 'Supported video types: MP4, MOV, MKV, WEBM, AVI, WMV and MPEG.' });
+    }
+    const lengthHeader = request.headers['content-length'];
+    const length = Number(lengthHeader);
+    if (lengthHeader !== undefined && (!Number.isSafeInteger(length) || length <= 0)) {
+      return json(response, 400, { error: 'Choose a nonempty video file.' });
+    }
+    if (length > maxUploadBytes) {
+      return json(response, 413, { error: 'Files must be 200 MB or smaller.' });
+    }
+    if (missing.length) return json(response, 503, { error: `Missing ${missing.join(', ')}. Install the media tools first.` });
+    if (active || shuttingDown) return json(response, 409, { error: 'A conversion is already in progress.' });
+    const id = randomUUID();
+    const job = {
+      id, kind: 'upload', dir: join(stash, id), format: 'mp4', quality: preset, extension,
+      title: filename.slice(0, 160).replace(/\\.[^.]+$/, '') || 'Video',
+      state: 'uploading', readers: 0, request,
+    };
+    jobs.set(id, job);
+    active = latest = job;
+    job.completion = perform(job, async () => {
+      let bytes = 0;
+      const limiter = new Transform({
+        transform(chunk, encoding, callback) {
+          bytes += chunk.length;
+          if (bytes > maxUploadBytes) {
+            return callback(new UploadError(413, 'Files must be 200 MB or smaller.'));
+          }
+          if (length > 0) job.progress = Math.min(99, Math.floor(bytes * 100 / length));
+          callback(null, chunk);
+        },
+      });
+      try {
+        await pipeline(request, limiter, createWriteStream(join(job.dir, `upload${extension}`), { flags: 'wx' }));
+      } catch (error) {
+        if (request.destroyed && !request.complete) job.cancelled = true;
+        throw error;
+      }
+      if (!bytes) throw new UploadError(400, 'Choose a nonempty video file.');
+      if (job.cancelled) throw new UploadError(400, 'Upload cancelled.');
+      job.originalSize = bytes;
+      job.request = null;
+      job.progress = null;
+      job.state = 'converting';
+      if (!response.destroyed) json(response, 202, { job: publicJob(job) });
+      return compressVideo(tools, job, job.dir);
+    }, response);
+    return;
+  }
   if (method === 'POST' && path === '/api/jobs') {
     const data = await readRequest(request);
     const url = typeof data?.url === 'string' && sourceUrl(data.url.trim());
@@ -179,7 +257,7 @@ async function handle(request, response) {
   return json(response, 404, { error: 'Page not found.' });
 }
 
-const server = createServer({ requestTimeout: 15000, headersTimeout: 10000 }, (request, response) => {
+const server = createServer({ requestTimeout: 10 * 60 * 1000, headersTimeout: 10000 }, (request, response) => {
   handle(request, response).catch(error => {
     console.error(error.code ?? error.message);
     if (response.headersSent) response.destroy();
