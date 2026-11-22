@@ -114,7 +114,7 @@ function cancel(job) {
   job.cancelled = true;
   job.state = 'cancelling';
   job.child?.kill();
-  if (job.state === 'cancelling' && job.request) job.request.destroy();
+  job.request?.destroy();
 }
 
 function fileHeader(job) {
