@@ -8,6 +8,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { compressVideo, compressionPresets, findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
+import { canConvert, conversionCatalog, ConversionError, convertFile } from './converter.mjs';
 
 const root = import.meta.dirname;
 const hosted = process.env.CLIPDECK_HOSTED === '1';
@@ -33,7 +34,10 @@ const compressionMissing = missing.filter(tool => tool !== 'yt-dlp');
 const outputTypes = {
   mp3: 'audio/mpeg', mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
   mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo',
-  wmv: 'video/x-ms-wmv', mpeg: 'video/mpeg', mpg: 'video/mpeg',
+  wmv: 'video/x-ms-wmv', mpeg: 'video/mpeg', mpg: 'video/mpeg', gif: 'image/gif',
+  mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', flac: 'audio/flac',
+  ogg: 'audio/ogg', opus: 'audio/ogg', png: 'image/png', jpg: 'image/jpeg',
+  webp: 'image/webp', bmp: 'image/bmp', tiff: 'image/tiff',
 };
 const retention = 12 * 60 * 60 * 1000;
 const maxUploadBytes = 200_000_000;
@@ -93,7 +97,7 @@ async function perform(job, worker = () => processMedia(tools, job, job.dir), up
   } catch (error) {
     job.state = job.cancelled ? 'cancelled' : 'failed';
     if (!job.cancelled) {
-      job.error = error instanceof UploadError || error.constructor.name === 'MediaError'
+      job.error = error instanceof UploadError || error instanceof ConversionError || error.constructor.name === 'MediaError'
         ? error.message : 'Could not create the conversion. Check the host’s available storage.';
     }
     if (uploadResponse && !uploadResponse.headersSent && !uploadResponse.destroyed) {
@@ -120,7 +124,9 @@ function cancel(job) {
 function fileHeader(job) {
   let title = (job.title || 'YouTube clip').replace(/[<>:"/\\|?*\p{Cc}\p{Cf}]/gu, '_').trim().replace(/[. ]+$/, '');
   if (!title) title = 'YouTube clip';
-  const suffix = job.kind === 'upload' ? job.originalPreserved ? 'original' : 'compressed' : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
+  const suffix = job.kind === 'convert' ? 'converted'
+    : job.kind === 'upload' ? job.originalPreserved ? 'original' : 'compressed'
+      : `${job.quality}${job.format === 'mp4' ? 'p' : 'kbps'}`;
   const filename = `${title} - ${suffix}.${job.format}`.toWellFormed();
   const fallback = filename.replace(/[^\x20-\x7E]/g, '_');
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`);
@@ -166,23 +172,28 @@ async function handle(request, response) {
     return response.end(method === 'HEAD' ? undefined : content);
   }
   if (method === 'GET' && path === '/api/status') {
-    return json(response, 200, { hosted, missing, compressionMissing, job: publicJob(active ?? latest) });
+    return json(response, 200, { hosted, missing, compressionMissing,
+      conversionCatalog, job: publicJob(active ?? latest) });
   }
-  if (method === 'POST' && path === '/api/uploads') {
+  if (method === 'POST' && (path === '/api/uploads' || path === '/api/conversions')) {
+    const convertingFile = path === '/api/conversions';
     if (request.headers['content-type'] !== 'application/octet-stream') {
-      return json(response, 415, { error: 'Choose a video file to upload.' });
+      return json(response, 415, { error: 'Choose a supported file to upload.' });
     }
     const params = new URL(request.url, local).searchParams;
     const preset = params.get('preset');
     const goalKind = params.get('goal');
     const goalValue = Number(params.get('value'));
-    if (!compressionPresets.includes(preset)) {
-      return json(response, 400, { error: 'Choose a supported compression level.' });
-    }
-    if (!['auto', 'percent', 'mb'].includes(goalKind)
-        || (goalKind === 'percent' && !(goalValue >= 1 && goalValue <= 95))
-        || (goalKind === 'mb' && !(goalValue >= .1 && goalValue <= 200))) {
-      return json(response, 400, { error: 'Choose Auto, a reduction of 1–95%, or a target from 0.1–200 MB.' });
+    const targetFormat = params.get('to');
+    if (!convertingFile) {
+      if (!compressionPresets.includes(preset)) {
+        return json(response, 400, { error: 'Choose a supported compression level.' });
+      }
+      if (!['auto', 'percent', 'mb'].includes(goalKind)
+          || (goalKind === 'percent' && !(goalValue >= 1 && goalValue <= 95))
+          || (goalKind === 'mb' && !(goalValue >= .1 && goalValue <= 200))) {
+        return json(response, 400, { error: 'Choose Auto, a reduction of 1–95%, or a target from 0.1–200 MB.' });
+      }
     }
     let filename;
     try { filename = decodeURIComponent(request.headers['x-clipdeck-filename'] ?? ''); } catch { /* Invalid encoding. */ }
@@ -191,7 +202,11 @@ async function handle(request, response) {
       return json(response, 400, { error: 'Choose a video with a valid filename.' });
     }
     const extension = extname(filename).toLowerCase();
-    if (!videoExtensions.has(extension)) {
+    if (convertingFile) {
+      if (!canConvert(extension.slice(1), targetFormat)) {
+        return json(response, 415, { error: 'This source and output combination is not supported. Choose a compatible file type.' });
+      }
+    } else if (!videoExtensions.has(extension)) {
       return json(response, 415, { error: 'Supported video types: MP4, MOV, MKV, WEBM, AVI, WMV and MPEG.' });
     }
     const lengthHeader = request.headers['content-length'];
@@ -206,7 +221,8 @@ async function handle(request, response) {
     if (active || shuttingDown) return json(response, 409, { error: 'A conversion is already in progress.' });
     const id = randomUUID();
     const job = {
-      id, kind: 'upload', dir: join(stash, id), format: 'mp4', quality: preset, goalKind, goalValue, extension,
+      id, kind: convertingFile ? 'convert' : 'upload', dir: join(stash, id),
+      format: convertingFile ? targetFormat : 'mp4', targetFormat, quality: preset, goalKind, goalValue, extension,
       title: filename.slice(0, 160).replace(/\.[^.]+$/, '') || 'Video',
       state: 'uploading', readers: 0, request,
     };
@@ -230,14 +246,14 @@ async function handle(request, response) {
         if (request.destroyed && !request.complete && !(error instanceof UploadError)) job.cancelled = true;
         throw error;
       }
-      if (!bytes) throw new UploadError(400, 'Choose a nonempty video file.');
+      if (!bytes) throw new UploadError(400, 'Choose a nonempty file.');
       if (job.cancelled) throw new UploadError(400, 'Upload cancelled.');
       job.originalSize = bytes;
       job.request = null;
       job.progress = null;
       job.state = 'converting';
       if (!response.destroyed) json(response, 202, { job: publicJob(job) });
-      return compressVideo(tools, job, job.dir);
+      return convertingFile ? convertFile(tools, job, job.dir) : compressVideo(tools, job, job.dir);
     }, response);
     return;
   }
