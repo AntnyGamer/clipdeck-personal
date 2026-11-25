@@ -4,3 +4,5 @@
 node_modules/
 *.zip
 launcher/payload.zip
+launcher/rsrc*.syso
+embedded-resources/

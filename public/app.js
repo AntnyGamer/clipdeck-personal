@@ -164,7 +164,6 @@ function showHealth(next, text) {
   health = next;
   byId('host-status').dataset.health = next;
   setText(byId('host-label'), text);
-  updateSubmit();
 }
 
 function scheduleRefresh(delay) {
@@ -178,18 +177,20 @@ async function refresh() {
   const priorRevision = revision;
   try {
     const timeout = working.has(job?.state) ? 8000 : 90000;
-    const response = await fetch('/api/status', { signal: AbortSignal.timeout(timeout) });
+    const path = conversionCatalog ? '/api/status?compact=1' : '/api/status';
+    const response = await fetch(path, { signal: AbortSignal.timeout(timeout) });
     if (!response.ok) throw new Error('Host unreachable');
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
     compressionReady = !(status.compressionMissing ?? status.missing).length;
-    const limit = status.hosted ? 200_000_000 : Infinity;
+    const limit = status.maxUploadBytes === null ? Infinity
+      : status.maxUploadBytes ?? (status.hosted ? 200_000_000 : Infinity);
     if (maxUploadBytes !== limit) {
       maxUploadBytes = limit;
       showGoal();
     }
-    const limitHint = status.hosted
-      ? 'Maximum file size: 200 MB.'
+    const limitHint = Number.isFinite(maxUploadBytes)
+      ? `Maximum file size: ${sizeLabel(maxUploadBytes)}.`
       : 'No fixed file-size limit in local mode; available disk space still matters.';
     setText(byId('compress-upload-hint'),
       `MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. ${limitHint} The original stays on your device.`);
@@ -216,6 +217,7 @@ async function refresh() {
     if (priorRevision === revision && !commandRunning) {
       compressionReady = false;
       showHealth('offline', 'Host offline');
+      updateSubmit();
     }
   } finally {
     refreshing = false;
@@ -264,10 +266,14 @@ function fileExtension(filename) {
   return filename.match(/\.([^.]+)$/)?.[1].toLowerCase() ?? '';
 }
 
+function categoryFor(extension) {
+  return Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+}
+
 function showAvailableFormats() {
   const file = converterFile.files[0];
   const extension = file && fileExtension(file.name);
-  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  const category = categoryFor(extension);
   const previous = file === selectedSourceFile ? targetSelect.value : '';
   selectedSourceFile = file;
   targetSelect.replaceChildren(new Option('Choose an output format', ''));
@@ -281,6 +287,7 @@ function showAvailableFormats() {
   const search = targetSearch.value.trim().toLowerCase();
   const names = { video: 'Video', audio: 'Audio', image: 'Images' };
   const aliases = { jpg: 'jpeg', tiff: 'tif', mkv: 'matroska', mov: 'quicktime' };
+  const formats = [];
   for (const [group, extensions] of Object.entries(category.outputs)) {
     const matching = extensions.filter(format => format !== extension
       && (format.includes(search) || aliases[format]?.includes(search)
@@ -289,11 +296,11 @@ function showAvailableFormats() {
     const list = document.createElement('optgroup');
     list.label = names[group] ?? group;
     for (const format of matching) {
+      formats.push(format);
       list.append(new Option(format.toUpperCase(), format));
     }
     targetSelect.append(list);
   }
-  const formats = Array.from(targetSelect.options).map(option => option.value).filter(Boolean);
   if (!formats.length) targetSelect.options[0].textContent = 'No matching output formats';
   targetSelect.disabled = !formats.length;
   targetSelect.value = formats.includes(previous) ? previous : '';
@@ -313,7 +320,7 @@ function showGoal() {
     const percent = kind === 'percent';
     goalField.min = percent ? '1' : '0.1';
     if (percent) goalField.max = '95';
-    else if (Number.isFinite(maxUploadBytes)) goalField.max = '200';
+    else if (Number.isFinite(maxUploadBytes)) goalField.max = String(maxUploadBytes / 1000000);
     else goalField.removeAttribute('max');
     goalField.step = percent ? '1' : '0.1';
     goalField.value = String(savedGoals[kind]);
@@ -354,8 +361,11 @@ function uploadMedia(file, path, kind, format) {
   xhr.setRequestHeader('Content-Type', 'application/octet-stream');
   xhr.setRequestHeader('X-Clipdeck-Filename', encodeURIComponent(file.name));
   xhr.upload.onprogress = event => {
-    if (event.lengthComputable && job?.state === 'uploading') {
-      renderJob({ ...job, progress: Math.min(99, 100 * event.loaded / event.total) });
+    if (uploadRequest === xhr && event.lengthComputable && job?.state === 'uploading') {
+      // Only progress changes during an upload; leave the other controls untouched.
+      job.progress = Math.min(99, 100 * event.loaded / event.total);
+      progress.value = job.progress;
+      setText(byId('result-text'), jobText(job));
     }
   };
   xhr.onload = () => {
@@ -389,7 +399,7 @@ function startFileConversion(event) {
   const file = converterFile.files[0];
   const target = targetSelect.value;
   const extension = fileExtension(file.name);
-  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  const category = categoryFor(extension);
   if (!category || extension === target
       || !Object.values(category.outputs).some(formats => formats.includes(target))) {
     message('Choose a compatible output format for this file.');
@@ -403,8 +413,23 @@ form.addEventListener('change', event => {
   if (event.target.name === 'quality') selected[form.elements.format.value] = Number(event.target.value);
 });
 source.addEventListener('input', () => message(''));
+function fileSelectionError(file) {
+  if (!file) return '';
+  if (!file.size) return 'Choose a nonempty file.';
+  if (file.size > maxUploadBytes) return `Files must be ${sizeLabel(maxUploadBytes)} or smaller.`;
+  return '';
+}
+
+function showCompressionFileSize() {
+  const file = fileField.files[0];
+  const size = byId('compress-file-size');
+  setText(size, file ? `Original size: ${sizeLabel(file.size)}` : '');
+  size.hidden = !file;
+}
+
 fileField.addEventListener('change', () => {
-  message(fileField.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
+  showCompressionFileSize();
+  message(fileSelectionError(fileField.files[0]));
   updateSubmit();
 });
 goalField.addEventListener('change', () => {
@@ -418,7 +443,7 @@ byId('youtube-tab').addEventListener('click', () => showMode('youtube'));
 byId('upload-tab').addEventListener('click', () => showMode('upload'));
 byId('file-tab').addEventListener('click', () => showMode('convert'));
 converterFile.addEventListener('change', () => {
-  message(converterFile.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
+  message(fileSelectionError(converterFile.files[0]));
   showAvailableFormats();
 });
 targetSearch.addEventListener('input', showAvailableFormats);
@@ -454,4 +479,5 @@ document.addEventListener('visibilitychange', () => {
 });
 showQualities();
 showGoal();
+showCompressionFileSize();
 refresh();

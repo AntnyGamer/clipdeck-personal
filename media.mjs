@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { access, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { access, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 
 const executable = process.platform === 'win32' ? '.exe' : '';
 const { CLIPDECK_PASSWORD, ...mediaEnv } = process.env;
+const maxToolOutput = 16 * 1024 * 1024;
 const videoId = /^[\w-]{11}$/;
 export const qualities = { mp4: [480, 720, 1080, 1440, 2160], mp3: [96, 128, 192, 256, 320] };
 export const fileProbeTimeout = process.env.CLIPDECK_HOSTED === '1' ? 20000 : 0;
@@ -31,28 +32,31 @@ export function sourceUrl(input) {
 
 export async function findTools(root) {
   const searchPaths = [join(root, '.tools'), ...(process.env.PATH ?? '').split(delimiter).filter(Boolean)];
-  const tools = {};
-  for (const name of ['yt-dlp', 'ffmpeg', 'ffprobe']) {
+  const entries = await Promise.all(['yt-dlp', 'ffmpeg', 'ffprobe'].map(async name => {
     for (const folder of searchPaths) {
       const candidate = join(folder, name + executable);
       try {
         await access(candidate);
-        tools[name] = candidate;
-        break;
+        return [name, candidate];
       } catch { /* Try the next directory. */ }
     }
-  }
-  return tools;
+    return null;
+  }));
+  return Object.fromEntries(entries.filter(Boolean));
 }
 
-class MediaError extends Error {}
+export class MediaError extends Error {}
 
 export function run(exe, args, job, options = {}) {
   if (job.cancelled) return Promise.reject(new MediaError('This conversion was cancelled.'));
   const { timeout = 0, onLine, capture = false, input = false,
     timeoutMessage = 'The media tool took too long to respond.' } = options;
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { env: mediaEnv, windowsHide: true, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const readOutput = capture || onLine;
+    const child = spawn(exe, args, {
+      env: mediaEnv, windowsHide: true,
+      stdio: [input ? 'pipe' : 'ignore', readOutput ? 'pipe' : 'ignore', 'pipe'],
+    });
     let output = '';
     let error = '';
     let tail = '';
@@ -64,20 +68,28 @@ export function run(exe, args, job, options = {}) {
       timedOut = true;
       child.kill();
     }, timeout) : undefined;
-    child.stdout.setEncoding('utf8').on('data', chunk => {
-      if (capture) {
-        output += chunk;
-        if (output.length > 16 * 1024 * 1024) {
-          tooMuchOutput = true;
-          child.kill();
+    if (readOutput) {
+      child.stdout.setEncoding('utf8').on('data', chunk => {
+        if (tooMuchOutput) return;
+        if (capture) {
+          output += chunk;
+          if (output.length > maxToolOutput) {
+            tooMuchOutput = true;
+            child.kill();
+          }
         }
-      }
-      if (onLine) {
-        const lines = (tail + chunk).split(/\r?\n/);
-        tail = lines.pop();
-        lines.forEach(onLine);
-      }
-    });
+        if (onLine && !tooMuchOutput) {
+          const lines = (tail + chunk).split(/\r?\n/);
+          tail = lines.pop();
+          if (tail.length > maxToolOutput || lines.some(line => line.length > maxToolOutput)) {
+            tooMuchOutput = true;
+            child.kill();
+          } else {
+            lines.forEach(onLine);
+          }
+        }
+      });
+    }
     child.stderr.setEncoding('utf8').on('data', chunk => { error = (error + chunk).slice(-12000); });
     child.once('error', reject);
     child.once('close', code => {
@@ -87,9 +99,26 @@ export function run(exe, args, job, options = {}) {
       else if (timedOut) reject(new MediaError(timeoutMessage));
       else if (tooMuchOutput) reject(new MediaError('YouTube returned too much data for this link.'));
       else if (code !== 0) reject(new Error(error.trim() || `${exe} exited with status ${code}`));
-      else resolve(output);
+      else {
+        if (onLine && tail) onLine(tail);
+        resolve(output);
+      }
     });
   });
+}
+
+// Uploaded files are standalone media, never playlists or externally referenced media.
+export const uploadInputOptions = [
+  '-protocol_whitelist', 'file',
+  '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,asf_o,mpeg,mpegts,mpegtsraw,mpegvideo,flv,mp3,wav,aac,flac,ogg,aiff,image2,image2pipe,jpeg_pipe,png_pipe,webp_pipe,bmp_pipe,tiff_pipe',
+];
+
+// Request only the fields used by conversion, compression and stream selection.
+export async function probeMedia(tools, input, job, inputOptions = []) {
+  const entries = 'stream=index,codec_type,codec_name,pix_fmt,width,height,duration:stream_disposition=attached_pic:format=duration,format_name';
+  const raw = await run(tools.ffprobe, ['-v', 'error', ...inputOptions, '-show_entries', entries, '-of', 'json', input],
+    job, { capture: true, timeout: fileProbeTimeout });
+  return JSON.parse(raw);
 }
 
 function ytArgs(tools) {
@@ -131,18 +160,20 @@ async function download(info, tools, job, dir) {
     ? ['-f', 'ba/b']
     : ['-f', 'bv*+ba/b', '-S', `res:${job.quality},vcodec:h264,acodec:aac`];
   job.state = 'downloading';
+  const sourcePrefix = join(dir, 'source.');
+  let file;
   const line = value => {
     const match = /^clipdeck:\s*(\d+(?:\.\d+)?)%/.exec(value);
     if (match) job.progress = Math.min(100, +match[1]);
+    else if (value.startsWith(sourcePrefix)) file = value;
   };
   try {
-    const output = await run(tools['yt-dlp'], [
+    await run(tools['yt-dlp'], [
       ...ytArgs(tools), ...selection, '--load-info-json', metadata, '--no-warnings', '--quiet',
       '--progress', '--newline', '--progress-template', 'download:clipdeck:%(progress._percent_str)s',
       '--merge-output-format', 'mkv', '-o', join(dir, 'source.%(ext)s'),
       '--print', 'after_move:filepath',
-    ], job, { onLine: line, capture: true });
-    const file = output.split(/\r?\n/).findLast(value => value.startsWith(join(dir, 'source.')));
+    ], job, { onLine: line });
     if (file && dirname(file) === dir) return file;
     throw new Error('Downloader did not return the expected output path.');
   } catch (error) {
@@ -179,7 +210,7 @@ function liveInput(formats, format, limit) {
   return { ...video, audioUrl: video.acodec === 'none' ? audioStreams[0]?.url : undefined };
 }
 
-export async function captureStream(stream, tools, job, dir) {
+async function captureStream(stream, tools, job, dir) {
   const target = join(dir, 'capture.mkv');
   job.state = 'connecting';
   const hlsHelp = await run(tools.ffmpeg, ['-hide_banner', '-h', 'demuxer=hls'], job, { capture: true, timeout: 15000 });
@@ -227,15 +258,14 @@ export function stopCapture(job) {
   return true;
 }
 
-export async function finalize(input, tools, job, dir) {
+async function finalize(input, tools, job, dir) {
   if (job.cancelled) throw new MediaError('This conversion was cancelled.');
   job.state = 'converting';
   job.progress = null;
   const output = join(dir, `result.${job.format}`);
   const temp = join(dir, `encoding.${job.format}`);
   try {
-    const raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input], job, { capture: true, timeout: fileProbeTimeout });
-    const { streams, format } = JSON.parse(raw);
+    const { streams = [], format = {} } = await probeMedia(tools, input, job);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const duration = Number(format.duration) || job.recorded || job.duration;
@@ -284,15 +314,14 @@ export async function compressVideo(tools, job, dir) {
   job.state = 'converting';
   job.progress = null;
   try {
-    let raw;
+    let metadata;
     try {
-      raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: fileProbeTimeout });
+      metadata = await probeMedia(tools, input, job, uploadInputOptions);
     } catch (error) {
       if (error instanceof MediaError) throw error;
       throw new MediaError('Could not read this video. Choose a supported, uncorrupted video file.');
     }
-    const { streams = [], format = {} } = JSON.parse(raw);
+    const { streams = [], format = {} } = metadata;
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     if (!video?.width || !video?.height) throw new MediaError('This file has no valid video track.');
@@ -310,12 +339,11 @@ export async function compressVideo(tools, job, dir) {
     if ((isLossless || preferLossless) && desired != null && job.originalSize <= desired) {
       return keepOriginal('The original already meets your size goal.');
     }
-    const wantCopy = isLossless || preferLossless;
-    if (wantCopy) {
+    if (isLossless || preferLossless) {
       const copyFile = join(dir, 'copy.mkv');
       try {
         await run(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2',
-          '-i', input, '-map', `0:${video.index}`, '-map', '0:a?', '-map_metadata', '-1',
+          ...uploadInputOptions, '-i', input, '-map', `0:${video.index}`, '-map', '0:a?', '-map_metadata', '-1',
           '-map_chapters', '-1', '-sn', '-dn', '-c', 'copy', copyFile], job);
         const copySize = (await stat(copyFile)).size;
         if (isLossless && desired != null && copySize > desired) {
@@ -335,13 +363,15 @@ export async function compressVideo(tools, job, dir) {
         if (desired == null) return keepOriginal('Lossless remuxing was unavailable; the original was preserved.');
         if (isLossless) throw new MediaError('This file could not be remuxed without quality loss. Try Prefer lossless instead.');
       }
+      // A rejected remux is no longer needed once we proceed to re-encoding.
+      await rm(copyFile, { force: true }).catch(() => {});
     }
     const ceiling = job.quality === 'small' ? 720 : job.quality === 'balanced' ? 1080 : null;
     const resize = ceiling && Math.min(video.width, video.height) > ceiling
       ? `scale=w='trunc(iw*min(1,${ceiling}/min(iw,ih))/2)*2':h='trunc(ih*min(1,${ceiling}/min(iw,ih))/2)*2'`
       : null;
     const base = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1',
-      '-nostats', '-threads', '2', '-filter_threads', '1', '-i', input,
+      '-nostats', '-threads', '2', '-filter_threads', '1', ...uploadInputOptions, '-i', input,
       '-map', `0:${video.index}`, '-map_metadata', '-1', '-map_chapters', '-1',
       '-sn', '-dn', '-c:v', 'libx264', '-threads:v', '2', '-preset', 'veryfast', '-pix_fmt', 'yuv420p'];
     if (resize) base.push('-vf', resize);

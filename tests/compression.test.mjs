@@ -50,6 +50,7 @@ test('compresses uploaded videos with lossless and target-size choices', async t
   const targeted = await runCase('percent-target', 'best', 'percent', 25);
   assert.equal(targeted.lossless, false);
   assert.equal(targeted.job.format, 'mp4');
+  await assert.rejects(stat(join(root, 'percent-target', 'copy.mkv')), { code: 'ENOENT' });
   assert.ok(targeted.size < originalSize * .80, 'Expected meaningful size reduction');
   assert.ok(targeted.size <= originalSize * .75 * 1.10, 'Should be close to target size');
 

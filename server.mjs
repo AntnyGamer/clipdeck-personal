@@ -4,10 +4,9 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
-import { compressVideo, compressionPresets, findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
+import { compressVideo, compressionPresets, findTools, MediaError, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
 import { canConvert, conversionCatalog, ConversionError, convertFile } from './converter.mjs';
 
 const root = import.meta.dirname;
@@ -52,6 +51,8 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/icon.png', ['icon.png', 'image/png']],
+  ['/favicon.ico', ['favicon.ico', 'image/x-icon']],
 ]);
 
 class UploadError extends Error {
@@ -77,13 +78,16 @@ function allowedOrigin(request, path) {
   return !origin || (hosted ? origin === external : origin === local || origin === localName);
 }
 
-async function readRequest(request) {
+async function readRequest(request, response) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] ?? '')) return null;
   let body = '';
   request.setEncoding('utf8');
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     body += chunk;
-    if (body.length > 4096) return null;
+    if (body.length > 4096) {
+      response.setHeader('Connection', 'close');
+      return null;
+    }
   }
   try { return JSON.parse(body); } catch { return null; }
 }
@@ -97,7 +101,7 @@ async function perform(job, worker = () => processMedia(tools, job, job.dir), up
   } catch (error) {
     job.state = job.cancelled ? 'cancelled' : 'failed';
     if (!job.cancelled) {
-      job.error = error instanceof UploadError || error instanceof ConversionError || error.constructor.name === 'MediaError'
+      job.error = error instanceof UploadError || error instanceof ConversionError || error instanceof MediaError
         ? error.message : 'Could not create the conversion. Check the host’s available storage.';
     }
     if (uploadResponse && !uploadResponse.headersSent && !uploadResponse.destroyed) {
@@ -110,7 +114,7 @@ async function perform(job, worker = () => processMedia(tools, job, job.dir), up
     if (active === job) active = null;
     const entries = await readdir(job.dir).catch(() => []);
     await Promise.allSettled(entries.filter(name => join(job.dir, name) !== job.file)
-      .map(name => rm(join(job.dir, name), { force: true })));
+      .map(name => rm(join(job.dir, name), { recursive: true, force: true })));
   }
 }
 
@@ -150,6 +154,18 @@ async function sendFile(response, job) {
   }
 }
 
+function acceptsGzip(header) {
+  const preferences = new Map();
+  for (const value of (header ?? '').split(',')) {
+    const [encoding, ...params] = value.trim().toLowerCase().split(';');
+    if (!encoding.trim()) continue;
+    const quality = params.find(param => /^\s*q\s*=/.test(param));
+    const weight = quality === undefined ? 1 : Number(quality.slice(quality.indexOf('=') + 1).trim());
+    preferences.set(encoding.trim(), Number.isFinite(weight) && weight > 0 && weight <= 1);
+  }
+  return preferences.get('gzip') ?? preferences.get('*') ?? false;
+}
+
 async function handle(request, response) {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -167,13 +183,28 @@ async function handle(request, response) {
   const asset = assets.get(path);
   if ((method === 'GET' || method === 'HEAD') && asset) {
     const [name, contentType] = asset;
-    const content = await readFile(join(root, 'public', name));
+    const filename = join(root, 'public', name);
+    let content;
+    if (hosted) {
+      response.setHeader('Vary', 'Accept-Encoding');
+      if (contentType.startsWith('text/') && acceptsGzip(request.headers['accept-encoding'])) {
+        // The Docker build pre-compresses these immutable assets. Development
+        // deployments without the sidecars still serve the original files.
+        content = await readFile(filename + '.gz').catch(error => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+        if (content) response.setHeader('Content-Encoding', 'gzip');
+      }
+    }
+    content ??= await readFile(filename);
     response.writeHead(200, { 'Content-Type': contentType, 'Content-Length': content.length });
     return response.end(method === 'HEAD' ? undefined : content);
   }
   if (method === 'GET' && path === '/api/status') {
     return json(response, 200, { hosted, missing, compressionMissing,
-      maxUploadBytes: hosted ? maxUploadBytes : null, conversionCatalog, job: publicJob(active ?? latest) });
+      maxUploadBytes: hosted ? maxUploadBytes : null,
+      conversionCatalog: request.url === '/api/status?compact=1' ? undefined : conversionCatalog,
+      job: publicJob(active ?? latest) });
   }
   if (method === 'POST' && (path === '/api/uploads' || path === '/api/conversions')) {
     const convertingFile = path === '/api/conversions';
@@ -232,18 +263,31 @@ async function handle(request, response) {
     active = latest = job;
     job.completion = perform(job, async () => {
       let bytes = 0;
-      const limiter = new Transform({
-        transform(chunk, encoding, callback) {
-          bytes += chunk.length;
-          if (bytes > maxUploadBytes) {
-            return callback(new UploadError(413, 'Files must be 200 MB or smaller.'));
+      let tooLarge = false;
+      async function* uploadChunks({ signal }) {
+        // Keep the HTTP socket available to return 413 for an oversized chunked
+        // request. Other failures must still interrupt the incoming upload.
+        const interrupt = () => {
+          if (!tooLarge && !request.complete) request.destroy();
+        };
+        signal.addEventListener('abort', interrupt, { once: true });
+        try {
+          for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+            bytes += chunk.length;
+            if (bytes > maxUploadBytes) {
+              tooLarge = true;
+              response.setHeader('Connection', 'close');
+              throw new UploadError(413, 'Files must be 200 MB or smaller.');
+            }
+            if (length > 0) job.progress = Math.min(99, Math.floor(bytes * 100 / length));
+            yield chunk;
           }
-          if (length > 0) job.progress = Math.min(99, Math.floor(bytes * 100 / length));
-          callback(null, chunk);
-        },
-      });
+        } finally {
+          signal.removeEventListener('abort', interrupt);
+        }
+      }
       try {
-        await pipeline(request, limiter, createWriteStream(join(job.dir, `upload${extension}`), { flags: 'wx' }));
+        await pipeline(uploadChunks, createWriteStream(join(job.dir, `upload${extension}`), { flags: 'wx' }));
       } catch (error) {
         if (request.destroyed && !request.complete && !(error instanceof UploadError)) job.cancelled = true;
         throw error;
@@ -260,7 +304,7 @@ async function handle(request, response) {
     return;
   }
   if (method === 'POST' && path === '/api/jobs') {
-    const data = await readRequest(request);
+    const data = await readRequest(request, response);
     const url = typeof data?.url === 'string' && sourceUrl(data.url.trim());
     const format = data?.format;
     const quality = data?.quality;

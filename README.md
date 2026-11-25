@@ -1,4 +1,6 @@
-# Clipdeck
+<p align="center"><img src="public/icon.png" alt="" width="96"></p>
+
+# ClipDeck
 
 Clipdeck is a password-protected YouTube converter, video compressor, and media file converter that works in a phone or desktop browser. It converts supported video, Shorts, and replay links to MP4 or MP3. For a supported active livestream, it starts at the live edge and exports the recorded portion when you select **Stop & save**.
 
@@ -12,7 +14,7 @@ Render wakes the app after an idle period. Keep the converter open while recordi
 
 ## Download the Windows EXE
 
-The [latest Windows release](https://github.com/AntnyGamer/clipdeck-personal/releases/latest) contains a portable `ClipDeck.exe`. Download and double-click it to open ClipDeck locally in your browser. Node.js, FFmpeg, FFprobe, and yt-dlp are bundled; separate installations and a Render account are not required. On first launch the EXE unpacks its bundled tools to the current user's local application cache, and subsequent launches reuse them. It keeps a local server running while ClipDeck is open; close the `ClipDeck.exe` process using Task Manager to stop it. Launcher diagnostics are written to `%LOCALAPPDATA%\\ClipDeck\\launcher.log`. The browser connects only to `127.0.0.1:4174`. Windows Defender/SmartScreen may show an unknown-publisher warning because the executable is not code-signed.
+The latest Windows release on this repository's Releases page contains a portable `ClipDeck.exe`. Download and double-click it to open ClipDeck locally in your browser. Node.js, FFmpeg, FFprobe, and yt-dlp are bundled; separate installations and a Render account are not required. On first launch the EXE unpacks its bundled tools to the current user's local application cache, and subsequent launches reuse them. It keeps a local server running while ClipDeck is open; close the `ClipDeck.exe` process using Task Manager to stop it. Launcher diagnostics are written to `%LOCALAPPDATA%\\ClipDeck\\launcher.log`. The browser connects only to `127.0.0.1:4174`. Windows Defender/SmartScreen may show an unknown-publisher warning because the executable is not code-signed.
 
 ## Run locally for development
 

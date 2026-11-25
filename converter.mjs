@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileProbeTimeout, run } from './media.mjs';
+import { probeMedia, run, uploadInputOptions } from './media.mjs';
 
 export const conversionCatalog = {
   video: {
@@ -29,10 +29,11 @@ const audioOptions = {
   opus: ['-c:a', 'libopus', '-b:a', '128k'],
 };
 
+const h264Options = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'];
 const videoOptions = {
-  mp4: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'],
-  mkv: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'],
-  mov: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p'],
+  mp4: h264Options,
+  mkv: h264Options,
+  mov: h264Options,
   webm: ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '5', '-b:v', '0', '-crf', '32'],
   avi: ['-c:v', 'mpeg4', '-q:v', '4'],
 };
@@ -47,21 +48,25 @@ const imageOptions = {
 
 export class ConversionError extends Error {}
 
-export function conversionTargets(extension) {
-  const category = Object.keys(conversionCatalog).find(name => conversionCatalog[name].inputs.includes(extension));
-  return category ? conversionCatalog[category].outputs : null;
+function sourceCategoryFor(extension) {
+  return Object.keys(conversionCatalog).find(name => conversionCatalog[name].inputs.includes(extension));
+}
+
+function supportsTarget(category, sourceExtension, outputExtension) {
+  return sourceExtension !== outputExtension && !!category
+    && Object.values(conversionCatalog[category].outputs).some(list => list.includes(outputExtension));
 }
 
 export function canConvert(sourceExtension, outputExtension) {
-  const options = conversionTargets(sourceExtension);
-  return sourceExtension !== outputExtension
-    && !!options && Object.values(options).some(list => list.includes(outputExtension));
+  return supportsTarget(sourceCategoryFor(sourceExtension), sourceExtension, outputExtension);
 }
 
 export async function convertFile(tools, job, dir) {
   const input = join(dir, `upload${job.extension}`);
   const target = job.targetFormat;
-  if (!canConvert(job.extension.slice(1), target)) {
+  const sourceExtension = job.extension.slice(1);
+  const sourceCategory = sourceCategoryFor(sourceExtension);
+  if (!supportsTarget(sourceCategory, sourceExtension, target)) {
     throw new ConversionError('This file type cannot be converted to the selected output format.');
   }
 
@@ -71,10 +76,7 @@ export async function convertFile(tools, job, dir) {
   try {
     let metadata;
     try {
-      const raw = await run(tools.ffprobe,
-        ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: fileProbeTimeout });
-      metadata = JSON.parse(raw);
+      metadata = await probeMedia(tools, input, job, uploadInputOptions);
     } catch (error) {
       if (job.cancelled) throw error;
       throw new ConversionError('Could not read this file. It may be damaged or use an unsupported codec.');
@@ -83,8 +85,6 @@ export async function convertFile(tools, job, dir) {
     const streams = metadata.streams ?? [];
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const audio = streams.find(stream => stream.codec_type === 'audio');
-    const sourceCategory = Object.keys(conversionCatalog).find(name =>
-      conversionCatalog[name].inputs.includes(job.extension.slice(1)));
     if ((sourceCategory !== 'audio' && !(video?.width > 0 && video?.height > 0)) ||
         (sourceCategory === 'audio' && !audio)) {
       throw new ConversionError('The file does not contain a valid media track.');
@@ -92,6 +92,11 @@ export async function convertFile(tools, job, dir) {
 
     if ((job.extension === '.jpeg' && target === 'jpg') ||
         (job.extension === '.tif' && target === 'tiff')) {
+      const validCodec = target === 'jpg' ? 'mjpeg' : 'tiff';
+      const validFormats = target === 'jpg' ? ['image2', 'jpeg_pipe'] : ['image2', 'tiff_pipe'];
+      if (video.codec_name !== validCodec || !validFormats.includes(metadata.format?.format_name)) {
+        throw new ConversionError('The file contents do not match the selected image extension.');
+      }
       const { size } = await stat(input);
       return { file: input, size, format: target, originalPreserved: true,
         notice: 'Only the file extension changed; the original data was preserved.' };
@@ -108,14 +113,14 @@ export async function convertFile(tools, job, dir) {
       m4a: ['aac', 'alac'],
       flac: ['flac'], ogg: ['vorbis'], opus: ['opus'],
     })[target].includes(audio.codec_name);
-    const videoCopy = !isAudio && !isImage && target !== 'gif'
-      && ['mp4', 'mov', 'mkv'].includes(target)
+    const videoCopy = ['mp4', 'mov', 'mkv'].includes(target)
       && video.codec_name === 'h264' && video.pix_fmt === 'yuv420p'
       && (!audio || audio.codec_name === 'aac');
 
     const duration = Number(metadata.format?.duration);
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2', '-filter_threads', '1',
-      '-progress', 'pipe:1', '-nostats', '-i', input, '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn'];
+      '-progress', 'pipe:1', '-nostats', ...uploadInputOptions, '-i', input,
+      '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn'];
     if (isAudio) {
       args.push('-map', `0:${audio.index}`, '-vn',
         ...(audioCopy ? ['-c:a', 'copy'] : audioOptions[target]));

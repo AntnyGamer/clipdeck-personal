@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 for (const hasDownloader of [true, false]) test(
@@ -30,7 +31,7 @@ for (const hasDownloader of [true, false]) test(
   await new Promise(resolve => listener.close(resolve));
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['server.mjs'], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     env: { ...process.env, CLIPDECK_PORT: String(port), PATH: hasDownloader ? `${bin}:${process.env.PATH}` : bin },
     stdio: 'ignore',
   });
@@ -46,8 +47,31 @@ for (const hasDownloader of [true, false]) test(
     await delay(100);
   }
   assert.ok(status, 'Server did not respond.');
+  const icon = await fetch(`${base}/icon.png`);
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/png');
+  const iconBytes = await readFile(new URL('../public/icon.png', import.meta.url));
+  assert.deepEqual(Buffer.from(await icon.arrayBuffer()), iconBytes);
+  const page = await (await fetch(base)).text();
+  assert.match(page, /rel="icon" type="image\/png" sizes="128x128" href="\/icon\.png"/);
+  assert.match(page, /rel="icon" type="image\/x-icon" href="\/favicon\.ico"/);
+  const favicon = await fetch(`${base}/favicon.ico`);
+  assert.equal(favicon.status, 200);
+  assert.equal(favicon.headers.get('content-type'), 'image/x-icon');
+  const ico = Buffer.from(await favicon.arrayBuffer());
+  assert.equal(ico.readUInt16LE(2), 1);
+  assert.equal(ico.readUInt16LE(4), 1);
+  assert.equal(ico[6], 128);
+  assert.equal(ico[7], 128);
+  assert.equal(ico.readUInt32LE(14), iconBytes.length);
+  assert.deepEqual(ico.subarray(ico.readUInt32LE(18)), iconBytes);
+  assert.match(page, /class="brand-icon" src="\/icon\.png"/);
   assert.deepEqual(status.compressionMissing, []);
   assert.deepEqual(status.missing, hasDownloader ? [] : ['yt-dlp']);
+  const { conversionCatalog, ...expectedCompact } = status;
+  assert.ok(conversionCatalog.video.outputs.audio.includes('mp3'));
+  const compact = await (await fetch(`${base}/api/status?compact=1`)).json();
+  assert.deepEqual(compact, expectedCompact);
   const health = await fetch(`${base}/healthz`);
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { ready: true, youtubeReady: hasDownloader });
@@ -124,6 +148,12 @@ for (const hasDownloader of [true, false]) test(
   }
   assert.equal(converted?.state, 'ready', converted?.error || 'File conversion timed out');
   assert.equal(converted.format, 'webm');
+  const fullReady = await (await fetch(`${base}/api/status`)).json();
+  const compactReady = await (await fetch(`${base}/api/status?compact=1`)).json();
+  const { conversionCatalog: readyCatalog, ...expectedReady } = fullReady;
+  assert.deepEqual(readyCatalog, conversionCatalog);
+  assert.deepEqual(compactReady, expectedReady);
+  assert.equal(compactReady.job.id, convertJob.id);
   const result = await fetch(`${base}/api/jobs/${convertJob.id}/file`);
   assert.equal(result.status, 200);
   assert.match(result.headers.get('content-type'), /video\/webm/);

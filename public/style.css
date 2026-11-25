@@ -30,10 +30,7 @@ button:disabled { cursor: default; }
   gap: .75rem;
 }
 .wordmark { display: flex; align-items: center; gap: .65rem; font-size: 1.2rem; font-weight: 740; letter-spacing: -.05em; }
-.brand-icon { width: 2rem; height: 2rem; position: relative; background: var(--blue); border-radius: .53rem; }
-.brand-icon::before, .brand-icon::after { content: ''; position: absolute; width: .97rem; height: .7rem; border: 1.6px solid #fff; border-radius: .17rem; }
-.brand-icon::before { left: .45rem; top: .57rem; opacity: .55; }
-.brand-icon::after { left: .55rem; top: .77rem; background: var(--blue); }
+.brand-icon { display: block; width: 2.25rem; height: 2.25rem; flex: none; object-fit: contain; }
 .host { display: inline-flex; gap: .5rem; align-items: center; color: var(--muted); font-size: .86rem; font-weight: 620; }
 .status-dot { background: #8792a4; width: .52rem; height: .52rem; border-radius: 50%; }
 .host[data-health="ready"] .status-dot { background: #1e8a5b; box-shadow: 0 0 0 3px #e0f2e9; }
