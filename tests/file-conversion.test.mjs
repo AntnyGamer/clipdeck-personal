@@ -147,3 +147,20 @@ test('rejects damaged or incompatible inputs', async t => {
     { extension: '.jpeg', targetFormat: 'jpg' }, dir),
   /Could not read this file|does not contain a valid media track/);
 });
+
+test('rejects mislabeled image aliases and playlist inputs rather than copying unrelated media', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'clipdeck-mislabeled-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const tools = { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' };
+  const video = join(dir, 'real.mp4');
+  execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=5',
+    '-t', '1', '-c:v', 'libx264', video]);
+  for (const [extension, target] of [['jpeg', 'jpg'], ['tif', 'tiff']]) {
+    await copyFile(video, join(dir, 'upload.' + extension));
+    await assert.rejects(convertFile(tools, { extension: '.' + extension, targetFormat: target }, dir),
+      /file contents do not match/i);
+  }
+  await writeFile(join(dir, 'upload.mp4'), "ffconcat version 1.0\nfile real.mp4\n");
+  await assert.rejects(convertFile(tools, { extension: '.mp4', targetFormat: 'webm' }, dir),
+    /could not read this file/i);
+});
