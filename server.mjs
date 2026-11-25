@@ -154,9 +154,9 @@ function acceptsGzip(header) {
   const preferences = new Map();
   for (const value of (header ?? '').split(',')) {
     const [encoding, ...params] = value.trim().toLowerCase().split(';');
-    if (!encoding) continue;
+    if (!encoding.trim()) continue;
     const quality = params.find(param => /^\s*q\s*=/.test(param));
-    const weight = quality === undefined ? 1 : Number(quality.split('=')[1].trim());
+    const weight = quality === undefined ? 1 : Number(quality.slice(quality.indexOf('=') + 1).trim());
     preferences.set(encoding.trim(), Number.isFinite(weight) && weight > 0 && weight <= 1);
   }
   return preferences.get('gzip') ?? preferences.get('*') ?? false;
