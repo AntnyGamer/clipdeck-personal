@@ -210,7 +210,7 @@ function liveInput(formats, format, limit) {
   return { ...video, audioUrl: video.acodec === 'none' ? audioStreams[0]?.url : undefined };
 }
 
-export async function captureStream(stream, tools, job, dir) {
+async function captureStream(stream, tools, job, dir) {
   const target = join(dir, 'capture.mkv');
   job.state = 'connecting';
   const hlsHelp = await run(tools.ffmpeg, ['-hide_banner', '-h', 'demuxer=hls'], job, { capture: true, timeout: 15000 });
@@ -258,7 +258,7 @@ export function stopCapture(job) {
   return true;
 }
 
-export async function finalize(input, tools, job, dir) {
+async function finalize(input, tools, job, dir) {
   if (job.cancelled) throw new MediaError('This conversion was cancelled.');
   job.state = 'converting';
   job.progress = null;
@@ -339,8 +339,7 @@ export async function compressVideo(tools, job, dir) {
     if ((isLossless || preferLossless) && desired != null && job.originalSize <= desired) {
       return keepOriginal('The original already meets your size goal.');
     }
-    const wantCopy = isLossless || preferLossless;
-    if (wantCopy) {
+    if (isLossless || preferLossless) {
       const copyFile = join(dir, 'copy.mkv');
       try {
         await run(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2',

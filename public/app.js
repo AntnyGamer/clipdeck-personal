@@ -266,10 +266,14 @@ function fileExtension(filename) {
   return filename.match(/\.([^.]+)$/)?.[1].toLowerCase() ?? '';
 }
 
+function categoryFor(extension) {
+  return Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+}
+
 function showAvailableFormats() {
   const file = converterFile.files[0];
   const extension = file && fileExtension(file.name);
-  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  const category = categoryFor(extension);
   const previous = file === selectedSourceFile ? targetSelect.value : '';
   selectedSourceFile = file;
   targetSelect.replaceChildren(new Option('Choose an output format', ''));
@@ -283,6 +287,7 @@ function showAvailableFormats() {
   const search = targetSearch.value.trim().toLowerCase();
   const names = { video: 'Video', audio: 'Audio', image: 'Images' };
   const aliases = { jpg: 'jpeg', tiff: 'tif', mkv: 'matroska', mov: 'quicktime' };
+  const formats = [];
   for (const [group, extensions] of Object.entries(category.outputs)) {
     const matching = extensions.filter(format => format !== extension
       && (format.includes(search) || aliases[format]?.includes(search)
@@ -291,11 +296,11 @@ function showAvailableFormats() {
     const list = document.createElement('optgroup');
     list.label = names[group] ?? group;
     for (const format of matching) {
+      formats.push(format);
       list.append(new Option(format.toUpperCase(), format));
     }
     targetSelect.append(list);
   }
-  const formats = Array.from(targetSelect.options).map(option => option.value).filter(Boolean);
   if (!formats.length) targetSelect.options[0].textContent = 'No matching output formats';
   targetSelect.disabled = !formats.length;
   targetSelect.value = formats.includes(previous) ? previous : '';
@@ -394,7 +399,7 @@ function startFileConversion(event) {
   const file = converterFile.files[0];
   const target = targetSelect.value;
   const extension = fileExtension(file.name);
-  const category = Object.values(conversionCatalog ?? {}).find(group => group.inputs.includes(extension));
+  const category = categoryFor(extension);
   if (!category || extension === target
       || !Object.values(category.outputs).some(formats => formats.includes(target))) {
     message('Choose a compatible output format for this file.');
