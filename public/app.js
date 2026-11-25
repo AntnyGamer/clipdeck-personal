@@ -178,7 +178,8 @@ async function refresh() {
   const priorRevision = revision;
   try {
     const timeout = working.has(job?.state) ? 8000 : 90000;
-    const response = await fetch('/api/status', { signal: AbortSignal.timeout(timeout) });
+    const path = conversionCatalog ? '/api/status?compact=1' : '/api/status';
+    const response = await fetch(path, { signal: AbortSignal.timeout(timeout) });
     if (!response.ok) throw new Error('Host unreachable');
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
@@ -354,8 +355,11 @@ function uploadMedia(file, path, kind, format) {
   xhr.setRequestHeader('Content-Type', 'application/octet-stream');
   xhr.setRequestHeader('X-Clipdeck-Filename', encodeURIComponent(file.name));
   xhr.upload.onprogress = event => {
-    if (event.lengthComputable && job?.state === 'uploading') {
-      renderJob({ ...job, progress: Math.min(99, 100 * event.loaded / event.total) });
+    if (uploadRequest === xhr && event.lengthComputable && job?.state === 'uploading') {
+      // Only progress changes during an upload; leave the other controls untouched.
+      job.progress = Math.min(99, 100 * event.loaded / event.total);
+      progress.value = job.progress;
+      setText(byId('result-text'), jobText(job));
     }
   };
   xhr.onload = () => {
