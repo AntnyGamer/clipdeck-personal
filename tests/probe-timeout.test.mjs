@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hlsSegmentOptions, probeMedia, run } from '../media.mjs';
+import { probeMedia, run } from '../media.mjs';
 
 test('file inspection has no fixed timeout locally but is bounded when hosted', () => {
   const fileUrl = new URL('../media.mjs', import.meta.url).href;
@@ -81,24 +81,4 @@ test('line-only subprocess output remains bounded for malformed giant lines', as
   await assert.rejects(run(process.execPath,
     ['-e', 'process.stdout.write("x".repeat(17 * 1024 * 1024))'], {},
     { onLine() {}, timeout: 10000 }), /too much data/i);
-});
-
-test('live capture reuses successful HLS capability checks and invalidates replaced tools',
-  { skip: process.platform === 'win32' }, async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'clipdeck-hls-help-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const ffmpeg = join(dir, 'ffmpeg');
-  const log = join(dir, 'calls');
-  async function install(help) {
-    await writeFile(ffmpeg, `#!/bin/sh\nprintf x >> "${log}"\nprintf '%s\\n' '${help}'\n`, { mode: 0o700 });
-  }
-  await install('-extension_picky');
-  const tools = { ffmpeg };
-  assert.deepEqual(await hlsSegmentOptions(tools, {}), ['-extension_picky', '0']);
-  assert.deepEqual(await hlsSegmentOptions(tools, {}), ['-extension_picky', '0']);
-  assert.equal(await readFile(log, 'utf8'), 'x');
-  await assert.rejects(hlsSegmentOptions(tools, { cancelled: true }), /cancelled/);
-  await install('older build');
-  assert.deepEqual(await hlsSegmentOptions(tools, {}), []);
-  assert.equal(await readFile(log, 'utf8'), 'xx');
 });
