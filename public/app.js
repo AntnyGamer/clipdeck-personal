@@ -164,7 +164,6 @@ function showHealth(next, text) {
   health = next;
   byId('host-status').dataset.health = next;
   setText(byId('host-label'), text);
-  updateSubmit();
 }
 
 function scheduleRefresh(delay) {
@@ -217,6 +216,7 @@ async function refresh() {
     if (priorRevision === revision && !commandRunning) {
       compressionReady = false;
       showHealth('offline', 'Host offline');
+      updateSubmit();
     }
   } finally {
     refreshing = false;
