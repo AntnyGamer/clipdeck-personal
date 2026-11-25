@@ -4,7 +4,6 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
-import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { compressVideo, compressionPresets, findTools, MediaError, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
@@ -262,18 +261,31 @@ async function handle(request, response) {
     active = latest = job;
     job.completion = perform(job, async () => {
       let bytes = 0;
-      const limiter = new Transform({
-        transform(chunk, encoding, callback) {
-          bytes += chunk.length;
-          if (bytes > maxUploadBytes) {
-            return callback(new UploadError(413, 'Files must be 200 MB or smaller.'));
+      let tooLarge = false;
+      async function* uploadChunks({ signal }) {
+        // Keep the HTTP socket available to return 413 for an oversized chunked
+        // request. Other failures must still interrupt the incoming upload.
+        const interrupt = () => {
+          if (!tooLarge && !request.complete) request.destroy();
+        };
+        signal.addEventListener('abort', interrupt, { once: true });
+        try {
+          for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+            bytes += chunk.length;
+            if (bytes > maxUploadBytes) {
+              tooLarge = true;
+              response.setHeader('Connection', 'close');
+              throw new UploadError(413, 'Files must be 200 MB or smaller.');
+            }
+            if (length > 0) job.progress = Math.min(99, Math.floor(bytes * 100 / length));
+            yield chunk;
           }
-          if (length > 0) job.progress = Math.min(99, Math.floor(bytes * 100 / length));
-          callback(null, chunk);
-        },
-      });
+        } finally {
+          signal.removeEventListener('abort', interrupt);
+        }
+      }
       try {
-        await pipeline(request, limiter, createWriteStream(join(job.dir, `upload${extension}`), { flags: 'wx' }));
+        await pipeline(uploadChunks, createWriteStream(join(job.dir, `upload${extension}`), { flags: 'wx' }));
       } catch (error) {
         if (request.destroyed && !request.complete && !(error instanceof UploadError)) job.cancelled = true;
         throw error;
