@@ -407,7 +407,15 @@ form.addEventListener('change', event => {
   if (event.target.name === 'quality') selected[form.elements.format.value] = Number(event.target.value);
 });
 source.addEventListener('input', () => message(''));
+function showCompressionFileSize() {
+  const file = fileField.files[0];
+  const size = byId('compress-file-size');
+  setText(size, file ? `Original size: ${sizeLabel(file.size)}` : '');
+  size.hidden = !file;
+}
+
 fileField.addEventListener('change', () => {
+  showCompressionFileSize();
   message(fileField.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
   updateSubmit();
 });
@@ -458,4 +466,5 @@ document.addEventListener('visibilitychange', () => {
 });
 showQualities();
 showGoal();
+showCompressionFileSize();
 refresh();
