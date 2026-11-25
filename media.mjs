@@ -45,7 +45,7 @@ export async function findTools(root) {
   return Object.fromEntries(entries.filter(Boolean));
 }
 
-class MediaError extends Error {}
+export class MediaError extends Error {}
 
 export function run(exe, args, job, options = {}) {
   if (job.cancelled) return Promise.reject(new MediaError('This conversion was cancelled.'));
@@ -107,10 +107,16 @@ export function run(exe, args, job, options = {}) {
   });
 }
 
+// Uploaded files are standalone media, never playlists or externally referenced media.
+export const uploadInputOptions = [
+  '-protocol_whitelist', 'file',
+  '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,asf_o,mpeg,mpegts,mpegtsraw,mpegvideo,flv,mp3,wav,aac,flac,ogg,aiff,image2,image2pipe,jpeg_pipe,png_pipe,webp_pipe,bmp_pipe,tiff_pipe',
+];
+
 // Request only the fields used by conversion, compression and stream selection.
-export async function probeMedia(tools, input, job) {
-  const entries = 'stream=index,codec_type,codec_name,pix_fmt,width,height,duration:stream_disposition=attached_pic:format=duration';
-  const raw = await run(tools.ffprobe, ['-v', 'error', '-show_entries', entries, '-of', 'json', input],
+export async function probeMedia(tools, input, job, inputOptions = []) {
+  const entries = 'stream=index,codec_type,codec_name,pix_fmt,width,height,duration:stream_disposition=attached_pic:format=duration,format_name';
+  const raw = await run(tools.ffprobe, ['-v', 'error', ...inputOptions, '-show_entries', entries, '-of', 'json', input],
     job, { capture: true, timeout: fileProbeTimeout });
   return JSON.parse(raw);
 }
@@ -310,7 +316,7 @@ export async function compressVideo(tools, job, dir) {
   try {
     let metadata;
     try {
-      metadata = await probeMedia(tools, input, job);
+      metadata = await probeMedia(tools, input, job, uploadInputOptions);
     } catch (error) {
       if (error instanceof MediaError) throw error;
       throw new MediaError('Could not read this video. Choose a supported, uncorrupted video file.');
@@ -338,7 +344,7 @@ export async function compressVideo(tools, job, dir) {
       const copyFile = join(dir, 'copy.mkv');
       try {
         await run(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2',
-          '-i', input, '-map', `0:${video.index}`, '-map', '0:a?', '-map_metadata', '-1',
+          ...uploadInputOptions, '-i', input, '-map', `0:${video.index}`, '-map', '0:a?', '-map_metadata', '-1',
           '-map_chapters', '-1', '-sn', '-dn', '-c', 'copy', copyFile], job);
         const copySize = (await stat(copyFile)).size;
         if (isLossless && desired != null && copySize > desired) {
@@ -366,7 +372,7 @@ export async function compressVideo(tools, job, dir) {
       ? `scale=w='trunc(iw*min(1,${ceiling}/min(iw,ih))/2)*2':h='trunc(ih*min(1,${ceiling}/min(iw,ih))/2)*2'`
       : null;
     const base = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-progress', 'pipe:1',
-      '-nostats', '-threads', '2', '-filter_threads', '1', '-i', input,
+      '-nostats', '-threads', '2', '-filter_threads', '1', ...uploadInputOptions, '-i', input,
       '-map', `0:${video.index}`, '-map_metadata', '-1', '-map_chapters', '-1',
       '-sn', '-dn', '-c:v', 'libx264', '-threads:v', '2', '-preset', 'veryfast', '-pix_fmt', 'yuv420p'];
     if (resize) base.push('-vf', resize);
