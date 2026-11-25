@@ -21,6 +21,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY media.mjs converter.mjs server.mjs ./
 COPY public ./public
+RUN node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; import { gzipSync } from 'node:zlib'; for (const name of ['index.html', 'style.css', 'app.js']) { const path = 'public/' + name; writeFileSync(path + '.gz', gzipSync(readFileSync(path))); }"
 USER node
 ENV NODE_ENV=production CLIPDECK_HOSTED=1
 EXPOSE 10000
