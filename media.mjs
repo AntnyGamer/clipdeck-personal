@@ -4,6 +4,7 @@ import { delimiter, dirname, join } from 'node:path';
 
 const executable = process.platform === 'win32' ? '.exe' : '';
 const { CLIPDECK_PASSWORD, ...mediaEnv } = process.env;
+const maxToolOutput = 16 * 1024 * 1024;
 const videoId = /^[\w-]{11}$/;
 export const qualities = { mp4: [480, 720, 1080, 1440, 2160], mp3: [96, 128, 192, 256, 320] };
 export const fileProbeTimeout = process.env.CLIPDECK_HOSTED === '1' ? 20000 : 0;
@@ -51,7 +52,11 @@ export function run(exe, args, job, options = {}) {
   const { timeout = 0, onLine, capture = false, input = false,
     timeoutMessage = 'The media tool took too long to respond.' } = options;
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { env: mediaEnv, windowsHide: true, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const readOutput = capture || onLine;
+    const child = spawn(exe, args, {
+      env: mediaEnv, windowsHide: true,
+      stdio: [input ? 'pipe' : 'ignore', readOutput ? 'pipe' : 'ignore', 'pipe'],
+    });
     let output = '';
     let error = '';
     let tail = '';
@@ -63,23 +68,26 @@ export function run(exe, args, job, options = {}) {
       timedOut = true;
       child.kill();
     }, timeout) : undefined;
-    if (capture || onLine) {
+    if (readOutput) {
       child.stdout.setEncoding('utf8').on('data', chunk => {
         if (capture) {
           output += chunk;
-          if (output.length > 16 * 1024 * 1024) {
+          if (output.length > maxToolOutput) {
             tooMuchOutput = true;
             child.kill();
           }
         }
-        if (onLine) {
+        if (onLine && !tooMuchOutput) {
           const lines = (tail + chunk).split(/\r?\n/);
           tail = lines.pop();
-          lines.forEach(onLine);
+          if (tail.length > maxToolOutput || lines.some(line => line.length > maxToolOutput)) {
+            tooMuchOutput = true;
+            child.kill();
+          } else {
+            lines.forEach(onLine);
+          }
         }
       });
-    } else {
-      child.stdout.resume();
     }
     child.stderr.setEncoding('utf8').on('data', chunk => { error = (error + chunk).slice(-12000); });
     child.once('error', reject);
@@ -90,7 +98,10 @@ export function run(exe, args, job, options = {}) {
       else if (timedOut) reject(new MediaError(timeoutMessage));
       else if (tooMuchOutput) reject(new MediaError('YouTube returned too much data for this link.'));
       else if (code !== 0) reject(new Error(error.trim() || `${exe} exited with status ${code}`));
-      else resolve(output);
+      else {
+        if (onLine && tail) onLine(tail);
+        resolve(output);
+      }
     });
   });
 }
@@ -142,18 +153,20 @@ async function download(info, tools, job, dir) {
     ? ['-f', 'ba/b']
     : ['-f', 'bv*+ba/b', '-S', `res:${job.quality},vcodec:h264,acodec:aac`];
   job.state = 'downloading';
+  const sourcePrefix = join(dir, 'source.');
+  let file;
   const line = value => {
     const match = /^clipdeck:\s*(\d+(?:\.\d+)?)%/.exec(value);
     if (match) job.progress = Math.min(100, +match[1]);
+    else if (value.startsWith(sourcePrefix)) file = value;
   };
   try {
-    const output = await run(tools['yt-dlp'], [
+    await run(tools['yt-dlp'], [
       ...ytArgs(tools), ...selection, '--load-info-json', metadata, '--no-warnings', '--quiet',
       '--progress', '--newline', '--progress-template', 'download:clipdeck:%(progress._percent_str)s',
       '--merge-output-format', 'mkv', '-o', join(dir, 'source.%(ext)s'),
       '--print', 'after_move:filepath',
-    ], job, { onLine: line, capture: true });
-    const file = output.split(/\r?\n/).findLast(value => value.startsWith(join(dir, 'source.')));
+    ], job, { onLine: line });
     if (file && dirname(file) === dir) return file;
     throw new Error('Downloader did not return the expected output path.');
   } catch (error) {
