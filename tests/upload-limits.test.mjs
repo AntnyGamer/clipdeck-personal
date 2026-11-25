@@ -124,3 +124,64 @@ test('hosted static assets negotiate precompressed gzip without changing content
   assert.equal(denied.headers.get('content-encoding'), null);
   await denied.arrayBuffer();
 });
+
+test('oversized or malformed JSON produces a useful response', async t => {
+  const { base } = await startServer(t);
+  for (const body of ['x'.repeat(8192), '{"url":', 'null']) {
+    const response = await fetch(base + '/api/jobs', {
+      method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body,
+    });
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /paste a full youtube link/i);
+  }
+  assert.equal((await fetch(base + '/api/status')).status, 200);
+});
+
+test('hosted mode returns 413 for oversized uploads without a Content-Length', async t => {
+  const { base, auth } = await startServer(t, true);
+  const buffer = Buffer.alloc(1_000_000);
+  async function* chunks() {
+    for (let i = 0; i < 200; i++) yield buffer;
+    yield Buffer.alloc(1);
+  }
+  const result = await fetch(base + '/api/conversions?to=wav', {
+    method: 'POST', headers: { ...auth, Origin: base, 'Content-Type': 'application/octet-stream',
+      'X-Clipdeck-Filename': 'oversized.mp3' },
+    body: Readable.from(chunks()), duplex: 'half',
+  });
+  assert.equal(result.status, 413);
+  assert.match((await result.json()).error, /200 MB/);
+  const status = await (await fetch(base + '/api/status', { headers: auth })).json();
+  assert.equal(status.job.state, 'failed');
+});
+
+test('disconnecting mid-upload cancels the job and releases the converter', async t => {
+  const { base } = await startServer(t);
+  const req = request(base + '/api/conversions?to=wav', {
+    method: 'POST', headers: { Origin: base, 'Content-Type': 'application/octet-stream',
+      'X-Clipdeck-Filename': 'partial.mp3', 'Content-Length': '1000000' },
+  });
+  req.on('error', () => {});
+  t.after(() => req.destroy());
+  req.write(Buffer.alloc(100));
+  let status;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    status = await (await fetch(base + '/api/status')).json();
+    if (status.job?.state === 'uploading') break;
+    await delay(50);
+  }
+  assert.equal(status.job?.state, 'uploading');
+  req.destroy();
+  for (let attempt = 0; attempt < 50; attempt++) {
+    status = await (await fetch(base + '/api/status')).json();
+    if (status.job?.state === 'cancelled') break;
+    await delay(50);
+  }
+  assert.equal(status.job?.state, 'cancelled');
+  const next = await fetch(base + '/api/conversions?to=wav', {
+    method: 'POST', headers: { Origin: base, 'Content-Type': 'application/octet-stream',
+      'X-Clipdeck-Filename': 'next.mp3' }, body: 'not valid audio',
+  });
+  assert.equal(next.status, 202);
+  await next.arrayBuffer();
+});
