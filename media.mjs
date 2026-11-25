@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { access, rename, stat, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 
 const executable = process.platform === 'win32' ? '.exe' : '';
@@ -31,18 +31,17 @@ export function sourceUrl(input) {
 
 export async function findTools(root) {
   const searchPaths = [join(root, '.tools'), ...(process.env.PATH ?? '').split(delimiter).filter(Boolean)];
-  const tools = {};
-  for (const name of ['yt-dlp', 'ffmpeg', 'ffprobe']) {
+  const entries = await Promise.all(['yt-dlp', 'ffmpeg', 'ffprobe'].map(async name => {
     for (const folder of searchPaths) {
       const candidate = join(folder, name + executable);
       try {
         await access(candidate);
-        tools[name] = candidate;
-        break;
+        return [name, candidate];
       } catch { /* Try the next directory. */ }
     }
-  }
-  return tools;
+    return null;
+  }));
+  return Object.fromEntries(entries.filter(Boolean));
 }
 
 class MediaError extends Error {}
@@ -64,20 +63,24 @@ export function run(exe, args, job, options = {}) {
       timedOut = true;
       child.kill();
     }, timeout) : undefined;
-    child.stdout.setEncoding('utf8').on('data', chunk => {
-      if (capture) {
-        output += chunk;
-        if (output.length > 16 * 1024 * 1024) {
-          tooMuchOutput = true;
-          child.kill();
+    if (capture || onLine) {
+      child.stdout.setEncoding('utf8').on('data', chunk => {
+        if (capture) {
+          output += chunk;
+          if (output.length > 16 * 1024 * 1024) {
+            tooMuchOutput = true;
+            child.kill();
+          }
         }
-      }
-      if (onLine) {
-        const lines = (tail + chunk).split(/\r?\n/);
-        tail = lines.pop();
-        lines.forEach(onLine);
-      }
-    });
+        if (onLine) {
+          const lines = (tail + chunk).split(/\r?\n/);
+          tail = lines.pop();
+          lines.forEach(onLine);
+        }
+      });
+    } else {
+      child.stdout.resume();
+    }
     child.stderr.setEncoding('utf8').on('data', chunk => { error = (error + chunk).slice(-12000); });
     child.once('error', reject);
     child.once('close', code => {
@@ -90,6 +93,14 @@ export function run(exe, args, job, options = {}) {
       else resolve(output);
     });
   });
+}
+
+// Request only the fields used by conversion, compression and stream selection.
+export async function probeMedia(tools, input, job) {
+  const entries = 'stream=index,codec_type,codec_name,pix_fmt,width,height,duration:stream_disposition=attached_pic:format=duration';
+  const raw = await run(tools.ffprobe, ['-v', 'error', '-show_entries', entries, '-of', 'json', input],
+    job, { capture: true, timeout: fileProbeTimeout });
+  return JSON.parse(raw);
 }
 
 function ytArgs(tools) {
@@ -234,8 +245,7 @@ export async function finalize(input, tools, job, dir) {
   const output = join(dir, `result.${job.format}`);
   const temp = join(dir, `encoding.${job.format}`);
   try {
-    const raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input], job, { capture: true, timeout: fileProbeTimeout });
-    const { streams, format } = JSON.parse(raw);
+    const { streams, format } = await probeMedia(tools, input, job);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const duration = Number(format.duration) || job.recorded || job.duration;
@@ -284,15 +294,14 @@ export async function compressVideo(tools, job, dir) {
   job.state = 'converting';
   job.progress = null;
   try {
-    let raw;
+    let metadata;
     try {
-      raw = await run(tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: fileProbeTimeout });
+      metadata = await probeMedia(tools, input, job);
     } catch (error) {
       if (error instanceof MediaError) throw error;
       throw new MediaError('Could not read this video. Choose a supported, uncorrupted video file.');
     }
-    const { streams = [], format = {} } = JSON.parse(raw);
+    const { streams = [], format = {} } = metadata;
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     if (!video?.width || !video?.height) throw new MediaError('This file has no valid video track.');
