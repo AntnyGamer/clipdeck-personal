@@ -47,6 +47,7 @@ test('focused probe preserves every field needed for media processing, including
         ...fields.map(field => stream[field]), stream.disposition?.attached_pic,
       ]),
       duration: metadata.format.duration,
+      format: metadata.format.format_name,
     };
   }
   for (const input of [video, cover]) {
