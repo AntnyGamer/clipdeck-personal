@@ -48,6 +48,10 @@ for (const hasDownloader of [true, false]) test(
   assert.ok(status, 'Server did not respond.');
   assert.deepEqual(status.compressionMissing, []);
   assert.deepEqual(status.missing, hasDownloader ? [] : ['yt-dlp']);
+  const { conversionCatalog, ...expectedCompact } = status;
+  assert.ok(conversionCatalog.video.outputs.audio.includes('mp3'));
+  const compact = await (await fetch(`${base}/api/status?compact=1`)).json();
+  assert.deepEqual(compact, expectedCompact);
   const health = await fetch(`${base}/healthz`);
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { ready: true, youtubeReady: hasDownloader });
@@ -124,6 +128,12 @@ for (const hasDownloader of [true, false]) test(
   }
   assert.equal(converted?.state, 'ready', converted?.error || 'File conversion timed out');
   assert.equal(converted.format, 'webm');
+  const fullReady = await (await fetch(`${base}/api/status`)).json();
+  const compactReady = await (await fetch(`${base}/api/status?compact=1`)).json();
+  const { conversionCatalog: readyCatalog, ...expectedReady } = fullReady;
+  assert.deepEqual(readyCatalog, conversionCatalog);
+  assert.deepEqual(compactReady, expectedReady);
+  assert.equal(compactReady.job.id, convertJob.id);
   const result = await fetch(`${base}/api/jobs/${convertJob.id}/file`);
   assert.equal(result.status, 200);
   assert.match(result.headers.get('content-type'), /video\/webm/);
