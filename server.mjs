@@ -52,7 +52,7 @@ const assets = new Map([
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/icon.png', ['icon.png', 'image/png']],
-  ['/favicon.ico', ['icon.png', 'image/png']],
+  ['/favicon.ico', ['favicon.ico', 'image/x-icon']],
 ]);
 
 class UploadError extends Error {
