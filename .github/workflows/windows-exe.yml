@@ -65,7 +65,7 @@ jobs:
           if ($info.ProductName -ne 'ClipDeck' -or $info.OriginalFilename -ne 'ClipDeck.exe') {
             throw 'Windows resource metadata was not embedded'
           }
-          go-winres extract --out embedded-resources ClipDeck.exe
+          go-winres extract --dir embedded-resources ClipDeck.exe
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect embedded resources' }
           if (!(Get-ChildItem embedded-resources -Recurse -Filter *.ico)) {
             throw 'The executable has no embedded icon'

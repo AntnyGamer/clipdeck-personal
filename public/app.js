@@ -183,13 +183,14 @@ async function refresh() {
     const status = await response.json();
     if (priorRevision !== revision || commandRunning) return;
     compressionReady = !(status.compressionMissing ?? status.missing).length;
-    const limit = status.hosted ? 200_000_000 : Infinity;
+    const limit = status.maxUploadBytes === null ? Infinity
+      : status.maxUploadBytes ?? (status.hosted ? 200_000_000 : Infinity);
     if (maxUploadBytes !== limit) {
       maxUploadBytes = limit;
       showGoal();
     }
-    const limitHint = status.hosted
-      ? 'Maximum file size: 200 MB.'
+    const limitHint = Number.isFinite(maxUploadBytes)
+      ? `Maximum file size: ${sizeLabel(maxUploadBytes)}.`
       : 'No fixed file-size limit in local mode; available disk space still matters.';
     setText(byId('compress-upload-hint'),
       `MP4, MOV, MKV, WEBM, AVI, WMV, or MPEG. ${limitHint} The original stays on your device.`);
@@ -314,7 +315,7 @@ function showGoal() {
     const percent = kind === 'percent';
     goalField.min = percent ? '1' : '0.1';
     if (percent) goalField.max = '95';
-    else if (Number.isFinite(maxUploadBytes)) goalField.max = '200';
+    else if (Number.isFinite(maxUploadBytes)) goalField.max = String(maxUploadBytes / 1000000);
     else goalField.removeAttribute('max');
     goalField.step = percent ? '1' : '0.1';
     goalField.value = String(savedGoals[kind]);
@@ -407,6 +408,13 @@ form.addEventListener('change', event => {
   if (event.target.name === 'quality') selected[form.elements.format.value] = Number(event.target.value);
 });
 source.addEventListener('input', () => message(''));
+function fileSelectionError(file) {
+  if (!file) return '';
+  if (!file.size) return 'Choose a nonempty file.';
+  if (file.size > maxUploadBytes) return `Files must be ${sizeLabel(maxUploadBytes)} or smaller.`;
+  return '';
+}
+
 function showCompressionFileSize() {
   const file = fileField.files[0];
   const size = byId('compress-file-size');
@@ -416,7 +424,7 @@ function showCompressionFileSize() {
 
 fileField.addEventListener('change', () => {
   showCompressionFileSize();
-  message(fileField.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
+  message(fileSelectionError(fileField.files[0]));
   updateSubmit();
 });
 goalField.addEventListener('change', () => {
@@ -430,7 +438,7 @@ byId('youtube-tab').addEventListener('click', () => showMode('youtube'));
 byId('upload-tab').addEventListener('click', () => showMode('upload'));
 byId('file-tab').addEventListener('click', () => showMode('convert'));
 converterFile.addEventListener('change', () => {
-  message(converterFile.files[0]?.size > maxUploadBytes ? 'Files must be 200 MB or smaller on Render.' : '');
+  message(fileSelectionError(converterFile.files[0]));
   showAvailableFormats();
 });
 targetSearch.addEventListener('input', showAvailableFormats);

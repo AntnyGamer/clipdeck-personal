@@ -47,6 +47,14 @@ for (const hasDownloader of [true, false]) test(
     await delay(100);
   }
   assert.ok(status, 'Server did not respond.');
+  const icon = await fetch(`${base}/icon.png`);
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/png');
+  const iconBytes = await readFile(new URL('../public/icon.png', import.meta.url));
+  assert.deepEqual(Buffer.from(await icon.arrayBuffer()), iconBytes);
+  const page = await (await fetch(base)).text();
+  assert.match(page, /rel="icon" type="image\/png" href="\/icon\.png"/);
+  assert.match(page, /class="brand-icon" src="\/icon\.png"/);
   assert.deepEqual(status.compressionMissing, []);
   assert.deepEqual(status.missing, hasDownloader ? [] : ['yt-dlp']);
   const { conversionCatalog, ...expectedCompact } = status;

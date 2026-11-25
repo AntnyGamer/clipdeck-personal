@@ -119,6 +119,14 @@ test('hosted static assets negotiate precompressed gzip without changing content
   assert.equal(fallback.status, 200);
   assert.equal(fallback.headers.get('content-encoding'), null);
   assert.deepEqual(Buffer.from(await fallback.arrayBuffer()), await readFile(join(root, 'public', 'style.css')));
+  const icon = await fetch(base + '/icon.png', { headers: { ...auth, 'Accept-Encoding': 'gzip' } });
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/png');
+  assert.equal(icon.headers.get('content-encoding'), null);
+  assert.deepEqual(Buffer.from(await icon.arrayBuffer()), await readFile(join(root, 'public', 'icon.png')));
+  const deniedIcon = await fetch(base + '/icon.png');
+  assert.equal(deniedIcon.status, 401);
+  await deniedIcon.arrayBuffer();
   const denied = await fetch(base + '/app.js', { headers: { 'Accept-Encoding': 'gzip' } });
   assert.equal(denied.status, 401);
   assert.equal(denied.headers.get('content-encoding'), null);
