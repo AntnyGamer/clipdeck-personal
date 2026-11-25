@@ -53,8 +53,23 @@ jobs:
       - name: Build self-contained Windows launcher
         shell: pwsh
         run: |
-          go build -trimpath -ldflags "-s -w -H=windowsgui -X=main.version=$env:GITHUB_SHA" -o ClipDeck.exe ./launcher/main.go
+          go install github.com/tc-hib/go-winres@v0.3.3
+          if ($LASTEXITCODE -ne 0) { throw 'Windows resource tool installation failed' }
+          $arch = go env GOARCH
+          go-winres simply --arch $arch --out launcher/rsrc --icon public/icon.png --manifest none --product-name ClipDeck --file-description "ClipDeck Media Conversion Tools" --original-filename ClipDeck.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Windows icon resource generation failed' }
+          $env:GO111MODULE = 'off'
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X=main.version=$env:GITHUB_SHA" -o ClipDeck.exe ./launcher
           if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          $info = (Get-Item ./ClipDeck.exe).VersionInfo
+          if ($info.ProductName -ne 'ClipDeck' -or $info.OriginalFilename -ne 'ClipDeck.exe') {
+            throw 'Windows resource metadata was not embedded'
+          }
+          go-winres extract --out embedded-resources ClipDeck.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect embedded resources' }
+          if (!(Get-ChildItem embedded-resources -Recurse -Filter *.ico)) {
+            throw 'The executable has no embedded icon'
+          }
 
       - name: Smoke-test actual EXE on Windows
         shell: pwsh
@@ -76,6 +91,12 @@ jobs:
               } catch {}
             }
             if (!$ready) { throw 'Packaged ClipDeck did not start or media tools are missing' }
+
+            $icon = Join-Path $env:RUNNER_TEMP 'clipdeck-served-icon.png'
+            Invoke-WebRequest http://127.0.0.1:4174/icon.png -OutFile $icon -TimeoutSec 5
+            if ((Get-FileHash $icon).Hash -ne (Get-FileHash public/icon.png).Hash) {
+              throw 'Packaged web icon differs from the original'
+            }
 
             $inputFile = Join-Path $env:RUNNER_TEMP 'clipdeck-exe-test.wav'
             & ./payload/ffmpeg.exe -hide_banner -loglevel error -f lavfi -i sine=frequency=440 -t 1 -c:a pcm_s16le $inputFile

@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 for (const hasDownloader of [true, false]) test(
@@ -30,7 +31,7 @@ for (const hasDownloader of [true, false]) test(
   await new Promise(resolve => listener.close(resolve));
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['server.mjs'], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     env: { ...process.env, CLIPDECK_PORT: String(port), PATH: hasDownloader ? `${bin}:${process.env.PATH}` : bin },
     stdio: 'ignore',
   });

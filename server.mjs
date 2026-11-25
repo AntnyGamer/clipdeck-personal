@@ -51,6 +51,8 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/icon.png', ['icon.png', 'image/png']],
+  ['/favicon.ico', ['icon.png', 'image/png']],
 ]);
 
 class UploadError extends Error {
@@ -185,7 +187,7 @@ async function handle(request, response) {
     let content;
     if (hosted) {
       response.setHeader('Vary', 'Accept-Encoding');
-      if (acceptsGzip(request.headers['accept-encoding'])) {
+      if (contentType.startsWith('text/') && acceptsGzip(request.headers['accept-encoding'])) {
         // The Docker build pre-compresses these immutable assets. Development
         // deployments without the sidecars still serve the original files.
         content = await readFile(filename + '.gz').catch(error => {
