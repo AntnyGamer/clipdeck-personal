@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, rename, stat, writeFile } from 'node:fs/promises';
+import { access, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 
 const executable = process.platform === 'win32' ? '.exe' : '';
@@ -344,6 +344,8 @@ export async function compressVideo(tools, job, dir) {
         if (desired == null) return keepOriginal('Lossless remuxing was unavailable; the original was preserved.');
         if (isLossless) throw new MediaError('This file could not be remuxed without quality loss. Try Prefer lossless instead.');
       }
+      // A rejected remux is no longer needed once we proceed to re-encoding.
+      await rm(copyFile, { force: true }).catch(() => {});
     }
     const ceiling = job.quality === 'small' ? 720 : job.quality === 'balanced' ? 1080 : null;
     const resize = ceiling && Math.min(video.width, video.height) > ceiling
