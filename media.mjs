@@ -70,6 +70,7 @@ export function run(exe, args, job, options = {}) {
     }, timeout) : undefined;
     if (readOutput) {
       child.stdout.setEncoding('utf8').on('data', chunk => {
+        if (tooMuchOutput) return;
         if (capture) {
           output += chunk;
           if (output.length > maxToolOutput) {
@@ -203,26 +204,12 @@ function liveInput(formats, format, limit) {
   return { ...video, audioUrl: video.acodec === 'none' ? audioStreams[0]?.url : undefined };
 }
 
-let hlsCapability;
-
-export async function hlsSegmentOptions(tools, job) {
-  if (job.cancelled) throw new MediaError('This conversion was cancelled.');
-  // Recheck if the executable has been replaced or cannot be identified.
-  const file = await stat(tools.ffmpeg).catch(() => null);
-  if (job.cancelled) throw new MediaError('This conversion was cancelled.');
-  const identity = file && [tools.ffmpeg, file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':');
-  if (identity && hlsCapability?.identity === identity) return hlsCapability.options;
-  const help = await run(tools.ffmpeg, ['-hide_banner', '-h', 'demuxer=hls'], job, { capture: true, timeout: 15000 });
-  // YouTube's signed HLS segment URLs can omit the audio file extension.
-  const options = help.includes('-extension_picky') ? ['-extension_picky', '0'] : [];
-  if (identity) hlsCapability = { identity, options };
-  return options;
-}
-
 export async function captureStream(stream, tools, job, dir) {
   const target = join(dir, 'capture.mkv');
   job.state = 'connecting';
-  const segmentOptions = await hlsSegmentOptions(tools, job);
+  const hlsHelp = await run(tools.ffmpeg, ['-hide_banner', '-h', 'demuxer=hls'], job, { capture: true, timeout: 15000 });
+  // YouTube's signed HLS segment URLs can omit the audio file extension.
+  const segmentOptions = hlsHelp.includes('-extension_picky') ? ['-extension_picky', '0'] : [];
   const input = url => ['-rw_timeout', '12000000', '-protocol_whitelist', 'http,https,tcp,tls,crypto',
     ...segmentOptions, '-live_start_index', '-1', '-i', url];
   const args = ['-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats', ...input(stream.url)];
@@ -272,7 +259,7 @@ export async function finalize(input, tools, job, dir) {
   const output = join(dir, `result.${job.format}`);
   const temp = join(dir, `encoding.${job.format}`);
   try {
-    const { streams, format } = await probeMedia(tools, input, job);
+    const { streams = [], format = {} } = await probeMedia(tools, input, job);
     const audio = streams.find(stream => stream.codec_type === 'audio');
     const video = streams.find(stream => stream.codec_type === 'video' && !stream.disposition?.attached_pic);
     const duration = Number(format.duration) || job.recorded || job.duration;
