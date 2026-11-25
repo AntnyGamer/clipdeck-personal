@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.24'
+          cache: false
 
       - name: Gather Windows runtime and media tools
         shell: pwsh
@@ -56,19 +57,28 @@ jobs:
           go install github.com/tc-hib/go-winres@v0.3.3
           if ($LASTEXITCODE -ne 0) { throw 'Windows resource tool installation failed' }
           $arch = go env GOARCH
-          go-winres simply --arch $arch --out launcher/rsrc --icon public/icon.png --manifest none --product-name ClipDeck --file-description "ClipDeck Media Conversion Tools" --original-filename ClipDeck.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Windows icon resource generation failed' }
+          go-winres make --in launcher/winres.json --arch $arch --out launcher/rsrc
+          if ($LASTEXITCODE -ne 0) { throw 'Windows resource generation failed' }
           $env:GO111MODULE = 'off'
+          $resources = go list -f '{{range .SysoFiles}}{{println .}}{{end}}' ./launcher
+          if ($LASTEXITCODE -ne 0 -or $resources -notcontains "rsrc_windows_$arch.syso") {
+            throw "Go did not include the generated resource object: $resources"
+          }
           go build -trimpath -ldflags "-s -w -H=windowsgui -X=main.version=$env:GITHUB_SHA" -o ClipDeck.exe ./launcher
           if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
-          $info = (Get-Item ./ClipDeck.exe).VersionInfo
-          if ($info.ProductName -ne 'ClipDeck' -or $info.OriginalFilename -ne 'ClipDeck.exe') {
-            throw 'Windows resource metadata was not embedded'
-          }
           go-winres extract --dir embedded-resources ClipDeck.exe
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect embedded resources' }
           if (!(Get-ChildItem embedded-resources -Recurse -Filter *.ico)) {
             throw 'The executable has no embedded icon'
+          }
+          $metadata = Get-Content embedded-resources/winres.json -Raw
+          if ($metadata -notmatch '"ProductName"\s*:\s*"ClipDeck"' -or
+              $metadata -notmatch '"OriginalFilename"\s*:\s*"ClipDeck.exe"') {
+            throw "The executable is missing its version resource: $metadata"
+          }
+          $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path ./ClipDeck.exe).Path)
+          if ($info.ProductName -ne 'ClipDeck' -or $info.OriginalFilename -ne 'ClipDeck.exe') {
+            throw "Windows could not read executable metadata: ProductName='$($info.ProductName)', OriginalFilename='$($info.OriginalFilename)'"
           }
 
       - name: Smoke-test actual EXE on Windows
