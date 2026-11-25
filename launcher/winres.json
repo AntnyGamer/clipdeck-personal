@@ -16,13 +16,17 @@
             "ProductName": "ClipDeck",
             "FileDescription": "ClipDeck Media Conversion Tools",
             "OriginalFilename": "ClipDeck.exe",
-            "InternalName": "ClipDeck"
+            "InternalName": "ClipDeck",
+            "FileVersion": "0.0.0.0",
+            "ProductVersion": "0.0.0.0"
           },
           "0409": {
             "ProductName": "ClipDeck",
             "FileDescription": "ClipDeck Media Conversion Tools",
             "OriginalFilename": "ClipDeck.exe",
-            "InternalName": "ClipDeck"
+            "InternalName": "ClipDeck",
+            "FileVersion": "0.0.0.0",
+            "ProductVersion": "0.0.0.0"
           }
         }
       }
