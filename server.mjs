@@ -7,7 +7,7 @@ import { extname, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
-import { compressVideo, compressionPresets, findTools, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
+import { compressVideo, compressionPresets, findTools, MediaError, processMedia, qualities, sourceUrl, stopCapture } from './media.mjs';
 import { canConvert, conversionCatalog, ConversionError, convertFile } from './converter.mjs';
 
 const root = import.meta.dirname;
@@ -77,13 +77,16 @@ function allowedOrigin(request, path) {
   return !origin || (hosted ? origin === external : origin === local || origin === localName);
 }
 
-async function readRequest(request) {
+async function readRequest(request, response) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] ?? '')) return null;
   let body = '';
   request.setEncoding('utf8');
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     body += chunk;
-    if (body.length > 4096) return null;
+    if (body.length > 4096) {
+      response.setHeader('Connection', 'close');
+      return null;
+    }
   }
   try { return JSON.parse(body); } catch { return null; }
 }
@@ -97,7 +100,7 @@ async function perform(job, worker = () => processMedia(tools, job, job.dir), up
   } catch (error) {
     job.state = job.cancelled ? 'cancelled' : 'failed';
     if (!job.cancelled) {
-      job.error = error instanceof UploadError || error instanceof ConversionError || error.constructor.name === 'MediaError'
+      job.error = error instanceof UploadError || error instanceof ConversionError || error instanceof MediaError
         ? error.message : 'Could not create the conversion. Check the host’s available storage.';
     }
     if (uploadResponse && !uploadResponse.headersSent && !uploadResponse.destroyed) {
@@ -110,7 +113,7 @@ async function perform(job, worker = () => processMedia(tools, job, job.dir), up
     if (active === job) active = null;
     const entries = await readdir(job.dir).catch(() => []);
     await Promise.allSettled(entries.filter(name => join(job.dir, name) !== job.file)
-      .map(name => rm(join(job.dir, name), { force: true })));
+      .map(name => rm(join(job.dir, name), { recursive: true, force: true })));
   }
 }
 
@@ -287,7 +290,7 @@ async function handle(request, response) {
     return;
   }
   if (method === 'POST' && path === '/api/jobs') {
-    const data = await readRequest(request);
+    const data = await readRequest(request, response);
     const url = typeof data?.url === 'string' && sourceUrl(data.url.trim());
     const format = data?.format;
     const quality = data?.quality;
