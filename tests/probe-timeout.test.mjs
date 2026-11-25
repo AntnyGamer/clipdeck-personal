@@ -59,10 +59,26 @@ test('focused probe preserves every field needed for media processing, including
   }
 });
 
-test('subprocess output is drained even when no capture or progress callback is needed', async () => {
+test('unused subprocess output is discarded without blocking the child', async () => {
   const job = {};
   const output = await run(process.execPath, ['-e', 'process.stdout.write("x".repeat(1024 * 1024))'],
     job, { timeout: 5000 });
   assert.equal(output, '');
   assert.equal(job.child, null);
+});
+
+test('line-only subprocess output includes a final unterminated line without accumulating output', async () => {
+  const lines = [];
+  const script = 'process.stdout.write("first\\r\\nsecond\\nlast")';
+  const output = await run(process.execPath, ['-e', script], {}, {
+    onLine: line => lines.push(line), timeout: 5000,
+  });
+  assert.deepEqual(lines, ['first', 'second', 'last']);
+  assert.equal(output, '');
+});
+
+test('line-only subprocess output remains bounded for malformed giant lines', async () => {
+  await assert.rejects(run(process.execPath,
+    ['-e', 'process.stdout.write("x".repeat(17 * 1024 * 1024))'], {},
+    { onLine() {}, timeout: 10000 }), /too much data/i);
 });
