@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileProbeTimeout, run } from './media.mjs';
+import { probeMedia, run } from './media.mjs';
 
 export const conversionCatalog = {
   video: {
@@ -71,10 +71,7 @@ export async function convertFile(tools, job, dir) {
   try {
     let metadata;
     try {
-      const raw = await run(tools.ffprobe,
-        ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', input],
-        job, { capture: true, timeout: fileProbeTimeout });
-      metadata = JSON.parse(raw);
+      metadata = await probeMedia(tools, input, job);
     } catch (error) {
       if (job.cancelled) throw error;
       throw new ConversionError('Could not read this file. It may be damaged or use an unsupported codec.');
