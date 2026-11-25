@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { probeMedia, run } from './media.mjs';
+import { probeMedia, run, uploadInputOptions } from './media.mjs';
 
 export const conversionCatalog = {
   video: {
@@ -71,7 +71,7 @@ export async function convertFile(tools, job, dir) {
   try {
     let metadata;
     try {
-      metadata = await probeMedia(tools, input, job);
+      metadata = await probeMedia(tools, input, job, uploadInputOptions);
     } catch (error) {
       if (job.cancelled) throw error;
       throw new ConversionError('Could not read this file. It may be damaged or use an unsupported codec.');
@@ -89,6 +89,11 @@ export async function convertFile(tools, job, dir) {
 
     if ((job.extension === '.jpeg' && target === 'jpg') ||
         (job.extension === '.tif' && target === 'tiff')) {
+      const validCodec = target === 'jpg' ? 'mjpeg' : 'tiff';
+      const validFormats = target === 'jpg' ? ['image2', 'jpeg_pipe'] : ['image2', 'tiff_pipe'];
+      if (video.codec_name !== validCodec || !validFormats.includes(metadata.format?.format_name)) {
+        throw new ConversionError('The file contents do not match the selected image extension.');
+      }
       const { size } = await stat(input);
       return { file: input, size, format: target, originalPreserved: true,
         notice: 'Only the file extension changed; the original data was preserved.' };
@@ -112,7 +117,8 @@ export async function convertFile(tools, job, dir) {
 
     const duration = Number(metadata.format?.duration);
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2', '-filter_threads', '1',
-      '-progress', 'pipe:1', '-nostats', '-i', input, '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn'];
+      '-progress', 'pipe:1', '-nostats', ...uploadInputOptions, '-i', input,
+      '-map_metadata', '-1', '-map_chapters', '-1', '-sn', '-dn'];
     if (isAudio) {
       args.push('-map', `0:${audio.index}`, '-vn',
         ...(audioCopy ? ['-c:a', 'copy'] : audioOptions[target]));
