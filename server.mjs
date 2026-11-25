@@ -150,6 +150,18 @@ async function sendFile(response, job) {
   }
 }
 
+function acceptsGzip(header) {
+  const preferences = new Map();
+  for (const value of (header ?? '').split(',')) {
+    const [encoding, ...params] = value.trim().toLowerCase().split(';');
+    if (!encoding) continue;
+    const quality = params.find(param => /^\s*q\s*=/.test(param));
+    const weight = quality === undefined ? 1 : Number(quality.split('=')[1].trim());
+    preferences.set(encoding.trim(), Number.isFinite(weight) && weight > 0 && weight <= 1);
+  }
+  return preferences.get('gzip') ?? preferences.get('*') ?? false;
+}
+
 async function handle(request, response) {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -167,7 +179,20 @@ async function handle(request, response) {
   const asset = assets.get(path);
   if ((method === 'GET' || method === 'HEAD') && asset) {
     const [name, contentType] = asset;
-    const content = await readFile(join(root, 'public', name));
+    const filename = join(root, 'public', name);
+    let content;
+    if (hosted) {
+      response.setHeader('Vary', 'Accept-Encoding');
+      if (acceptsGzip(request.headers['accept-encoding'])) {
+        // The Docker build pre-compresses these immutable assets. Development
+        // deployments without the sidecars still serve the original files.
+        content = await readFile(filename + '.gz').catch(error => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+        if (content) response.setHeader('Content-Encoding', 'gzip');
+      }
+    }
+    content ??= await readFile(filename);
     response.writeHead(200, { 'Content-Type': contentType, 'Content-Length': content.length });
     return response.end(method === 'HEAD' ? undefined : content);
   }
