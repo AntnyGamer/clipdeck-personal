@@ -173,7 +173,9 @@ async function handle(request, response) {
   }
   if (method === 'GET' && path === '/api/status') {
     return json(response, 200, { hosted, missing, compressionMissing,
-      maxUploadBytes: hosted ? maxUploadBytes : null, conversionCatalog, job: publicJob(active ?? latest) });
+      maxUploadBytes: hosted ? maxUploadBytes : null,
+      conversionCatalog: request.url === '/api/status?compact=1' ? undefined : conversionCatalog,
+      job: publicJob(active ?? latest) });
   }
   if (method === 'POST' && (path === '/api/uploads' || path === '/api/conversions')) {
     const convertingFile = path === '/api/conversions';
